@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Producto de inventario del fruver",
+      "type": "object",
+      "properties": {
+        "Codigo": { "type": "string" },
+        "Producto": { "type": "string" },
+        "Medida": { "type": "string" },
+        "Merma": { "type": "number" },
+        "Utilidad": { "type": "number" },
+        "Proveedor": { "type": "string" },
+        "Celular": { "type": "string" },
+        "Costo_Proveedor": { "type": "number" },
+        "Precio_Venta_Actual": { "type": "number" },
+        "Precio_Anterior": { "type": "number" },
+        "Venta_Anterior": { "type": "number" },
+        "Factor_Bulto": { "type": "number" },
+        "Factor_Canastilla": { "type": "number" }
+      },
+      "required": ["Codigo", "Producto"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Pedido de mercancía registrado para una sucursal",
+      "type": "object",
+      "properties": {
+        "ID_Pedido": { "type": "string" },
+        "Fecha": { "type": "string" },
+        "Sucursal": { "type": "string" },
+        "Codigo": { "type": "string" },
+        "Producto": { "type": "string" },
+        "Medida": { "type": "string" },
+        "Cantidad": { "type": "string" },
+        "Notas": { "type": "string" },
+        "Precio_Anterior": { "type": "number" },
+        "Porcentaje_Ganancia": { "type": "number" },
+        "Cantidad_Comprada": { "type": "number" },
+        "Costo_Momento": { "type": "number" },
+        "Precio_Venta_Momento": { "type": "number" },
+        "Kilos": { "type": "number" },
+        "Estado": { "type": "string" },
+        "Estado_Pago": { "type": "string" },
+        "Proveedor": { "type": "string" },
+        "Celular": { "type": "string" }
+      },
+      "required": ["Fecha", "Sucursal", "Codigo", "Producto"]
+    },
+    "CierreCaja": {
+      "title": "CierreCaja",
+      "description": "Registro diario de cierre de caja por sucursal",
+      "type": "object",
+      "properties": {
+        "fecha": { "type": "string" },
+        "sucursal": { "type": "string" },
+        "ventaEfectivo": { "type": "number" },
+        "ventaDatafono": { "type": "number" },
+        "ventaNequi": { "type": "number" },
+        "gastosCaja": { "type": "number" },
+        "comentarios": { "type": "string" },
+        "registradoPor": { "type": "string" }
+      },
+      "required": ["fecha", "sucursal"]
+    }
+  },
+  "firestore": {
+    "/productos/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Colección de productos en catálogo"
+    },
+    "/pedidos/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Colección de pedidos en tiempo real"
+    },
+    "/cierres_caja/{cierreId}": {
+      "schema": { "$ref": "#/entities/CierreCaja" },
+      "description": "Colección de cierres de caja diarios"
+    },
+    "/sucursales/{sucursalId}": {
+      "schema": "object",
+      "description": "Sedes y sucursales del Fruver"
+    },
+    "/nomina/{nominaId}": {
+      "schema": "object",
+      "description": "Registros de nómina y pagos de personal"
+    },
+    "/gastos_monedero/{gastoId}": {
+      "schema": "object",
+      "description": "Gastos operativos del monedero"
+    },
+    "/mermas/{mermaId}": {
+      "schema": "object",
+      "description": "Mermas y desperdicios registrados"
+    },
+    "/db_snapshots/{snapshotId}": {
+      "schema": "object",
+      "description": "Copia de respaldo sincronizada de la base de datos"
+    }
+  }
+}

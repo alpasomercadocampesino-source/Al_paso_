@@ -1,0 +1,8 @@
+{
+  "name": "al.paso",
+  "description": "58",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
