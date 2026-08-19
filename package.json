@@ -8,7 +8,6 @@
     "start": "node dist/server.cjs"
   },
   "dependencies": {
-    "@google/genai": "^2.11.0",
     "@types/pg": "^8.21.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",

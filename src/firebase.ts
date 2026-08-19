@@ -6,12 +6,10 @@ import {
   getDocs,
   query,
   where,
-  orderBy,
   onSnapshot,
   serverTimestamp,
   Timestamp,
   Unsubscribe,
-  DocumentData,
   SnapshotMetadata
 } from "firebase/firestore";
 

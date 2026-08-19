@@ -621,7 +621,7 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
   function scoreItem(item: any): number {
     if (!item || typeof item !== "object") return 0;
     let score = 0;
-    for (const [k, v] of Object.entries(item)) {
+    for (const v of Object.values(item)) {
       if (v !== null && v !== undefined && v !== "" && v !== 0) score++;
     }
     if (typeof item._id === "string" && item._id.includes("_")) score += 2;

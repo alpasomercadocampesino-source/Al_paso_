@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from "react";
-import { LogOut, User as UserIcon, ShoppingBag, RefreshCw, ShieldCheck, AlertTriangle, CheckCircle2, X, Activity } from "lucide-react";
+import { useState, useEffect } from "react";
+import { LogOut, User as UserIcon, RefreshCw, ShieldCheck, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import Login from "./components/Login";
 import SucursalDashboard from "./components/SucursalDashboard";
 import CompradorDashboard from "./components/CompradorDashboard";
 import AdminDashboard from "./components/AdminDashboard";
-import { SQLSyncHealthCheck } from "./components/SQLSyncHealthCheck";
 import { runStorageIntegrityCheck, IntegrityReport } from "./utils/integrityCheck";
 import { subscribeSyncLogs, SyncLogEvent, forceSync } from "./firebase";
 
@@ -29,7 +28,6 @@ export default function App() {
   const [lastGlobalSync, setLastGlobalSync] = useState(Date.now());
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [showIntegrityModal, setShowIntegrityModal] = useState(false);
-  const [showSQLHealthModal, setShowSQLHealthModal] = useState(false);
   const [integrityAlert, setIntegrityAlert] = useState<string | null>(null);
   const [syncLogsList, setSyncLogsList] = useState<SyncLogEvent[]>([]);
 
@@ -254,16 +252,6 @@ export default function App() {
               <span>{syncing ? "Sincronizando..." : "Sincronizar"}</span>
             </button>
 
-            {/* QA Health Check SQL Button */}
-            <button
-              onClick={() => setShowSQLHealthModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-600 text-white hover:bg-indigo-700 transition shadow-xs cursor-pointer"
-              title="Ejecutar suite de pruebas de salud QA para sincronización SQL"
-            >
-              <Activity className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Health Check SQL</span>
-            </button>
-
             {/* Storage Integrity Badge */}
             <button
               onClick={() => setShowIntegrityModal(true)}
@@ -409,22 +397,6 @@ export default function App() {
                 Entendido
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* SQL Sync QA Health Check Modal */}
-      {showSQLHealthModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="max-w-4xl w-full relative animate-in fade-in zoom-in-95 duration-200 my-auto">
-            <button
-              onClick={() => setShowSQLHealthModal(false)}
-              className="absolute top-4 right-4 z-10 p-2 bg-slate-800/80 text-slate-300 hover:text-white rounded-xl transition cursor-pointer"
-              title="Cerrar modal QA"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <SQLSyncHealthCheck />
           </div>
         </div>
       )}

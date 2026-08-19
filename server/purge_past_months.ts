@@ -1,4 +1,4 @@
-import { collection, getDocs, writeBatch, doc } from "firebase/firestore";
+import { collection, getDocs, writeBatch } from "firebase/firestore";
 import { dbDefault, dbNamed } from "./firebase.ts";
 import { DatabaseSchema } from "./db.ts";
 

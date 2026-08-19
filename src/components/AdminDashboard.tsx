@@ -18,8 +18,6 @@ import {
   getBranchPendingCount as getBranchPendingCountUtil,
   DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
-import SucursalDashboard from "./SucursalDashboard";
-import CompradorDashboard from "./CompradorDashboard";
 import {
   ResponsiveContainer,
   LineChart,

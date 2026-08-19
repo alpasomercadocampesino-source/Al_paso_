@@ -5,30 +5,7 @@ import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
 import { initDb, saveDb as originalSaveDb, recordSyncLog, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
-import { GoogleGenAI, Type } from "@google/genai";
-import { importCsvToDb } from "./server/import_csv.ts";
-import { queueFirestoreSync, saveRecordToFirestoreDirect, saveBatchToFirestoreDirect, deleteRecordFromFirestoreDirect, pullFromFirestore, clearFirestoreOperationalCollections, purgePastMonthsOrdersAndClosures } from "./server/firebase.ts";
-import { sqlSyncRouter } from "./server/sql_sync_routes.ts";
-
-let aiClient: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI {
-  if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error("La variable de entorno GEMINI_API_KEY es requerida para el procesamiento por voz. Por favor configúrela en el panel de Secrets.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
-  }
-  return aiClient;
-}
+import { saveRecordToFirestoreDirect, saveBatchToFirestoreDirect, deleteRecordFromFirestoreDirect, clearFirestoreOperationalCollections, purgePastMonthsOrdersAndClosures } from "./server/firebase.ts";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -36,7 +13,6 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-app.use("/api/sql-sync", sqlSyncRouter);
 
 // Colombia date utilities (UTC-5, no DST)
 function getColombiaDate(): string {

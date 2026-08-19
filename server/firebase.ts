@@ -37,7 +37,6 @@ signInAnonymously(auth).catch(() => {
 
 let isSyncReady = true;
 let quotaExhaustedUntil = 0;
-let lastSyncTimestamp = 0;
 
 export function isFirestoreDisabledState(): boolean {
   return false;

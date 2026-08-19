@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { 
-  ShoppingBag, Trash2, Send, Save, CreditCard, ClipboardCheck, History,
-  Plus, Search, Info, AlertTriangle, CheckSquare, Square, Check, RefreshCw, Mic, Calculator, Camera, Image as ImageIcon, Sparkles
+import {
+  ShoppingBag, Trash2, Send, Save, CreditCard, ClipboardCheck,
+  Plus, Search, Info, AlertTriangle, CheckSquare, Square, Check, RefreshCw, Calculator, Camera, Image as ImageIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Product, Order, DailyClosure, WalletTransaction, Shrinkage } from "../types";
+import { Product, Order, Shrinkage } from "../types";
 import { saveCachedProducts, getCachedProducts, queuePendingOrder, getPendingOrders, removePendingOrder } from "../utils/indexedDb";
 import { getColombiaDate } from "../utils/date";
 
@@ -68,7 +68,6 @@ const compressAndSetImage = (file: File, callback: (base64: string) => void) => 
 export default function SucursalDashboard({ branchName, lastGlobalSync }: SucursalDashboardProps) {
   const [activeTab, setActiveTab] = useState<"pedido" | "merma" | "cierre" | "monedero" | "rectificacion">("pedido");
   const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [draft, setDraft] = useState<{ [code: string]: { qty: string; note: string } }>({});
   const [previousOrderItems, setPreviousOrderItems] = useState<{ [code: string]: string }>({});
@@ -152,7 +151,6 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
 
   // Monedero Bodega State
   const [walletBalance, setWalletBalance] = useState(0);
-  const [walletHistory, setWalletHistory] = useState<WalletTransaction[]>([]);
   const [walletExpValue, setWalletExpValue] = useState("");
   const [walletExpDesc, setWalletExpDesc] = useState("");
   const [walletExpPhoto, setWalletExpPhoto] = useState<string | null>(null);
@@ -434,7 +432,6 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
       if (res.ok) {
         const data = await res.json();
         setWalletBalance(data.balance);
-        setWalletHistory(data.transactions);
       }
     } catch (e) {
       console.error(e);

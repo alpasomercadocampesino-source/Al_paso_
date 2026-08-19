@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { 
-  Briefcase, Truck, Users, CreditCard, Save, Calendar, Search, 
+import {
+  Truck, CreditCard, Save, Calendar, Search,
   CheckCircle2, AlertCircle, ShoppingCart, DollarSign, History,
-  Plus, Edit, Eye, UserCheck, Inbox, Archive, Check, FileText, X,
+  Plus, UserCheck, Check, FileText, X,
   ArrowUpDown, ArrowUp, ArrowDown, Upload, MessageSquare, Copy, FileSpreadsheet,
-  Image as ImageIcon, Download, Camera, Share2, FileImage
+  Image as ImageIcon, Download, Camera
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -17,14 +17,11 @@ import {
   Tooltip as ChartTooltip,
   CartesianGrid,
 } from "recharts";
-import { Order, DailyClosure, PackagingMovement, Provider, Product, WalletTransaction, PayrollRecord } from "../types";
+import { Order, DailyClosure, PackagingMovement, Provider, Product, WalletTransaction } from "../types";
 import { getColombiaDate } from "../utils/date";
 import {
   calculateBranchUncollected,
-  calculateTotalUncollected,
-  calculateCentralBalance,
   getBranchPendingCount as getBranchPendingCountUtil,
-  DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
 
 interface CompradorDashboardProps {
@@ -34,7 +31,7 @@ interface CompradorDashboardProps {
 }
 
 export default function CompradorDashboard({ username, isAdminView = false, lastGlobalSync }: CompradorDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"plaza" | "closures" | "packaging" | "payroll" | "ledger" | "history">("plaza");
+  const [activeTab, setActiveTab] = useState<"plaza" | "closures" | "packaging" | "ledger" | "history">("plaza");
   const [date, setDate] = useState(getColombiaDate());
   const [orders, setOrders] = useState<Order[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -48,7 +45,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   const [csvInputDate, setCsvInputDate] = useState(getColombiaDate());
   const [importingCsv, setImportingCsv] = useState(false);
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
-  const [selectedProductHistory, setSelectedProductHistory] = useState<string | null>(null);
+  const [, setSelectedProductHistory] = useState<string | null>(null);
   const [selectedProductName, setSelectedProductName] = useState<string | null>(null);
 
   // Price history modal states
@@ -83,7 +80,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   const [ledgerDesc, setLedgerDesc] = useState("");
   const [ledgerType, setLedgerType] = useState<"Ingreso" | "Gasto">("Gasto");
   const [ledgerValue, setLedgerValue] = useState("");
-  const [ledgerResp, setLedgerResp] = useState("Hamilton");
+  const [ledgerResp] = useState("Hamilton");
 
   const [valorTotalPedidos, setValorTotalPedidos] = useState(() => {
     return parseFloat(localStorage.getItem("valor_total_pedidos") || "0") || 0;
@@ -133,26 +130,6 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   const [packDelivered, setPackDelivered] = useState("");
   const [packReturned, setPackReturned] = useState("");
   const [packNotes, setPackNotes] = useState("");
-
-  // Payroll / Employee state
-  const [employees, setEmployees] = useState<string[]>(["Hamilton", "Nelson", "Felipe"]);
-  const [schedules, setSchedules] = useState<any[]>([]);
-  const [loans, setLoans] = useState<any[]>([]);
-  const [payrolls, setPayrolls] = useState<any[]>([]);
-  
-  // Payroll forms
-  const [schedEmp, setSchedEmp] = useState("");
-  const [schedBranch, setSchedBranch] = useState("Nobsa");
-  const [schedHours, setSchedHours] = useState("");
-  const [schedDate, setSchedDate] = useState(getColombiaDate());
-
-  const [loanEmp, setLoanEmp] = useState("");
-  const [loanAmount, setLoanAmount] = useState("");
-  const [loanReason, setLoanReason] = useState("");
-
-  const [genEmp, setGenEmp] = useState("");
-  const [genDateStart, setGenDateStart] = useState("");
-  const [genDateEnd, setGenDateEnd] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
@@ -698,7 +675,6 @@ export default function CompradorDashboard({ username, isAdminView = false, last
     fetchClosures();
     fetchWalletTxs();
     fetchPackaging();
-    fetchPayrollData();
     fetchLedgerTransactions();
 
     const interval = setInterval(() => {
@@ -803,26 +779,6 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           if (Array.isArray(data)) setPackagingLogs(data);
         } catch (e) {
           console.warn("Could not parse packaging JSON", e);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchPayrollData = async () => {
-    try {
-      const res = await fetch("/api/payroll/data");
-      if (res.ok) {
-        try {
-          const data = await res.json();
-          if (data && typeof data === "object") {
-            setSchedules(data.schedules || []);
-            setLoans(data.loans || []);
-            setPayrolls(data.payroll || []);
-          }
-        } catch (e) {
-          console.warn("Could not parse payroll JSON", e);
         }
       }
     } catch (e) {
@@ -1295,123 +1251,6 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Save Employee hours
-  const handleSaveSchedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!schedEmp || !schedHours) {
-      setErrorMsg("Complete los campos obligatorios");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/payroll/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          Fecha: schedDate,
-          Empleado: schedEmp,
-          Sucursal: schedBranch,
-          Horas_Trabajadas: schedHours
-        })
-      });
-
-      if (res.ok) {
-        setSuccessMsg(`Horas guardadas para ${schedEmp}`);
-        setSchedHours("");
-        fetchPayrollData();
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Save Employee loan
-  const handleSaveLoan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loanEmp || !loanAmount) {
-      setErrorMsg("Complete todos los campos de préstamo");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/payroll/loan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          Fecha: getColombiaDate(),
-          Empleado: loanEmp,
-          Monto: loanAmount,
-          Motivo: loanReason
-        })
-      });
-
-      if (res.ok) {
-        setSuccessMsg(`Préstamo de ${cop(parseFloat(loanAmount))} guardado para ${loanEmp}`);
-        setLoanAmount("");
-        setLoanReason("");
-        fetchPayrollData();
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Generate Weekly Payroll
-  const handleGeneratePayroll = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!genEmp || !genDateStart || !genDateEnd) {
-      setErrorMsg("Complete el formulario de generación");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/payroll/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          Empleado: genEmp,
-          Fecha_Inicio: genDateStart,
-          Fecha_Fin: genDateEnd
-        })
-      });
-
-      if (res.ok) {
-        setSuccessMsg(`Nómina generada con éxito para ${genEmp}`);
-        setGenEmp("");
-        fetchPayrollData();
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Mark Payroll as Paid
-  const handlePayPayroll = async (trabajador: string, fechaFin: string) => {
-    try {
-      const res = await fetch("/api/payroll/pay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ Trabajador: trabajador, Fecha: fechaFin })
-      });
-
-      if (res.ok) {
-        setSuccessMsg(`Nómina de ${trabajador} pagada.`);
-        fetchPayrollData();
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
     }
   };
 
@@ -2622,7 +2461,6 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                     <tbody className="divide-y divide-slate-100">
                       {plazaMatrixData.map((row, idx) => {
                         const isPlaza = PLAZA_CODES.has(row.Codigo.toUpperCase());
-                        const isVarying = row.Precio_Compra !== row.Precio_Anterior;
 
                         return (
                           <tr
