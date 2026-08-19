@@ -1,6 +1,12 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import * as dotenv from "dotenv";
 import * as schema from "./schema.ts";
+
+// Se carga aquí (no solo en server.ts) porque este módulo puede importarse
+// antes que cualquier otro punto de entrada llame a dotenv.config(), y
+// necesita SQL_HOST/SQL_USER/etc. disponibles en el momento en que se crea el Pool.
+dotenv.config();
 
 declare global {
   var _postgresPool: Pool | undefined;

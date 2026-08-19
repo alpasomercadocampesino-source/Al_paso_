@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { db as pgDb } from "../src/db/index.ts";
+import * as schema from "../src/db/schema.ts";
 
 export interface User {
   Usuario: string;
@@ -57,6 +59,8 @@ export interface DailyClosure {
   Descripcion_Gastos: string;
   Persona_Recogio: string;
   Recaudado_Fisico: boolean; // Managed by Comprador/Admin
+  Foto_Factura?: string;
+  Monto_Recaudado?: number;
 }
 
 export interface WalletTransaction {
@@ -67,6 +71,7 @@ export interface WalletTransaction {
   Descripcion: string;
   Responsable: string;
   Estado: "Pendiente" | "Reconciliado";
+  Foto_Factura?: string;
 }
 
 export interface Shrinkage {
@@ -75,6 +80,7 @@ export interface Shrinkage {
   Codigo: string;
   Producto: string;
   Cantidad: string;
+  Unidad?: string;
   Motivo: string;
   Costo_Proveedor: number;
   Perdida_Monetaria: number;
@@ -111,6 +117,7 @@ export interface EmployeeRate {
   Empleado: string;
   Valor_Dia: number;
   Valor_Hora: number;
+  Auxilio_Transporte?: number;
   Celular?: string;
   Cedula?: string;
 }
@@ -558,8 +565,7 @@ function loadInitialProducts(): Product[] {
       const codigo = parts[0].trim();
       const cat = parts[1].trim().toUpperCase();
       const producto = parts[2].trim();
-      
-      // Map Category to Medida
+
       let medida = "Unidad";
       if (cat === "E") medida = "Paquete/Unidad";
       else if (cat === "G") medida = "Unidad comercial";
@@ -567,16 +573,13 @@ function loadInitialProducts(): Product[] {
       else if (cat === "P") medida = "Kg";
       else if (cat === "O") medida = "Unidad";
 
-      // Parse Factor_Bulto and Factor_Canastilla
       const factorBulto = parts[3] && parts[3] !== "-" ? parseFloat(parts[3]) : 1;
       const factorCanastilla = parts[4] && parts[4] !== "-" ? parseFloat(parts[4]) : 1;
 
-      // Parse Utilidad
       let util = 0.30;
       if (parts[5]) {
         const rawUtil = parseFloat(parts[5].replace(",", "."));
         if (!isNaN(rawUtil)) {
-          // If utility is a multiplier like 1.40, convert to margin of 0.40
           util = rawUtil > 1.0 ? rawUtil - 1.0 : rawUtil;
         }
       }
@@ -584,7 +587,6 @@ function loadInitialProducts(): Product[] {
       const proveedor = parts[6] && parts[6].trim() !== "" ? parts[6].trim() : "Plaza Central";
       const celular = parts[7] && parts[7] !== "0" && parts[7].trim() !== "" ? parts[7].trim() : "3100000000";
 
-      // Default Costo based on category or standard values
       let costo = 1000;
       if (cat === "P") costo = 1500;
       else if (cat === "H") costo = 1200;
@@ -689,153 +691,12 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
   return localDb;
 }
 
-export function initDb(): DatabaseSchema {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-
-  const seedProducts = loadInitialProducts();
-  const backupFile = DB_FILE + ".bak";
-  let loadedDb: DatabaseSchema | null = null;
-
-  // 1. Try reading the main file db.json
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      const data = fs.readFileSync(DB_FILE, "utf-8");
-      if (data.trim().length > 10) {
-        loadedDb = JSON.parse(data) as DatabaseSchema;
-        console.log("[Database Safeguard] Archivo principal db.json cargado exitosamente.");
-      }
-    } catch (e: any) {
-      console.error("CRITICAL: El archivo principal db.json está corrupto o es inválido. Intentando restaurar desde copia de seguridad...", e.message || e);
-    }
-  }
-
-  // 2. If main file failed or was empty, try reading the backup file
-  if (!loadedDb && fs.existsSync(backupFile)) {
-    try {
-      const data = fs.readFileSync(backupFile, "utf-8");
-      if (data.trim().length > 10) {
-        loadedDb = JSON.parse(data) as DatabaseSchema;
-        console.warn("[Database Safeguard] ¡ALERTA CRÍTICA! El archivo principal db.json falló. Se restauró la base de datos exitosamente desde el archivo de copia de seguridad (db.json.bak).");
-        // Attempt to copy backup back to main file to restore stability
-        try {
-          fs.copyFileSync(backupFile, DB_FILE);
-        } catch (copyErr: any) {
-          console.error("No se pudo sobrescribir db.json corrupto con db.json.bak:", copyErr.message || copyErr);
-        }
-      }
-    } catch (bakErr: any) {
-      console.error("CRITICAL: También falló la carga desde la copia de seguridad db.json.bak:", bakErr.message || bakErr);
-    }
-  }
-
-  // 3. If everything failed or didn't exist, seed fresh
-  let db: DatabaseSchema;
-  if (loadedDb) {
-    db = loadedDb;
-  } else {
-    console.warn("[Database Safeguard] No se pudo encontrar un archivo de base de datos válido o copia de seguridad. Inicializando una base de datos limpia con los datos de semilla inicial.");
-    db = {
-      users: USER_SEED,
-      products: seedProducts,
-      providers: PROVIDER_SEED,
-      orders: [],
-      closures: [],
-      walletTransactions: [],
-      shrinkages: [],
-      packagingMovements: [],
-      schedules: [],
-      loans: [],
-      rates: RATES_SEED,
-      payroll: [],
-      priceHistory: [],
-      nequiExpenses: [],
-      branchConfigs: {
-        Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-        Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
-        Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000 },
-        Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
-        Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-      }
-    };
-  }
-
-  // Ensure all arrays are initialized
-  db.users = (db.users && db.users.length > 0) ? db.users : USER_SEED;
-
-  // Migrate default user passwords if they still use the old legacy password
-  if (db.users) {
-    db.users = db.users.map((u) => {
-      const match = USER_SEED.find((us) => us.Usuario.toLowerCase() === u.Usuario.toLowerCase());
-      if (match && u.Contraseña === "alpaso2026") {
-        return { ...u, Contraseña: match.Contraseña };
-      }
-      return u;
-    });
-  }
-
-  // Merge missing products from seed so we never delete user modifications but restore the catalog
-  if (!db.products || db.products.length === 0) {
-    db.products = seedProducts;
-  } else {
-    const existingCodes = new Set(db.products.map(p => p.Codigo));
-    for (const sp of seedProducts) {
-      if (!existingCodes.has(sp.Codigo)) {
-        db.products.push(sp);
-      }
-    }
-  }
-
-  // Merge missing providers
-  if (!db.providers || db.providers.length === 0) {
-    db.providers = PROVIDER_SEED;
-  } else {
-    const existingProviders = new Set(db.providers.map(p => p.Proveedor.toUpperCase()));
-    for (const sp of seedProducts) {
-      const pName = sp.Proveedor;
-      if (pName && pName !== "Plaza Central" && !existingProviders.has(pName.toUpperCase())) {
-        db.providers.push({
-          Proveedor: pName,
-          Celular: sp.Celular
-        });
-        existingProviders.add(pName.toUpperCase());
-      }
-    }
-  }
-
-  db.orders = db.orders || [];
-  db.closures = db.closures || [];
-  db.walletTransactions = db.walletTransactions || [];
-  db.shrinkages = db.shrinkages || [];
-  db.packagingMovements = db.packagingMovements || [];
-  db.schedules = db.schedules || [];
-  db.loans = db.loans || [];
-  db.rates = db.rates || RATES_SEED;
-  db.payroll = db.payroll || [];
-  db.priceHistory = db.priceHistory || [];
-  db.nequiExpenses = db.nequiExpenses || [];
-  db.syncLogs = db.syncLogs || [];
-  db.branchConfigs = db.branchConfigs || {
-    Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-    Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
-    Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000 },
-    Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
-    Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-  };
-
-  // Save database with merged content
-  deduplicateSchema(db);
-  saveDb(db);
-  return db;
-}
-
 export function ensureRecordIds(localDb: DatabaseSchema): void {
   if (!localDb) return;
 
   const collections = [
-    "users", "products", "providers", "orders", "closures", 
-    "walletTransactions", "shrinkages", "packagingMovements", 
+    "users", "products", "providers", "orders", "closures",
+    "walletTransactions", "shrinkages", "packagingMovements",
     "schedules", "loans", "rates", "payroll", "priceHistory", "nequiExpenses"
   ];
 
@@ -874,63 +735,354 @@ export function ensureRecordIds(localDb: DatabaseSchema): void {
   }
 }
 
-export function saveDb(db: DatabaseSchema) {
+// ─────────────────────────────────────────────
+// PERSISTENCIA: PostgreSQL (Supabase) es la fuente de la verdad.
+// El archivo data/db.json se conserva solo como copia local de respaldo
+// (best-effort, nunca bloquea ni se usa para leer si Postgres responde).
+// ─────────────────────────────────────────────
+
+function writeJsonBackup(db: DatabaseSchema) {
   if (!fs.existsSync(DB_DIR)) {
     fs.mkdirSync(DB_DIR, { recursive: true });
   }
-
-  deduplicateSchema(db);
-  ensureRecordIds(db);
-
-  // 1. JSON Stringify verification to block circular refs or corrupt serialization
-  let jsonString: string;
-  try {
-    jsonString = JSON.stringify(db, null, 2);
-    if (!jsonString || jsonString.length < 50) {
-      throw new Error("El JSON serializado es inválido o anormalmente pequeño.");
-    }
-  } catch (e: any) {
-    console.error("CRITICAL: Error al serializar la base de datos a JSON:", e);
-    throw new Error(`Fallo crítico de serialización: ${e.message}`);
-  }
-
+  const jsonString = JSON.stringify(db, null, 2);
   const tempFile = DB_FILE + ".tmp";
   const backupFile = DB_FILE + ".bak";
 
-  // 2. Backup previous database file if it exists and is structurally valid
   if (fs.existsSync(DB_FILE)) {
     try {
       const stats = fs.statSync(DB_FILE);
-      if (stats.size > 100) {
-        fs.copyFileSync(DB_FILE, backupFile);
-      }
+      if (stats.size > 100) fs.copyFileSync(DB_FILE, backupFile);
     } catch (err: any) {
       console.error("No se pudo crear copia de seguridad .bak previa:", err.message);
     }
   }
 
-  // 3. Write atomically to the temporary file
-  try {
-    fs.writeFileSync(tempFile, jsonString, "utf-8");
+  fs.writeFileSync(tempFile, jsonString, "utf-8");
+  JSON.parse(fs.readFileSync(tempFile, "utf-8"));
+  fs.renameSync(tempFile, DB_FILE);
+}
 
-    // Double check that the temp file was written properly and is valid JSON before renaming
-    const tempStats = fs.statSync(tempFile);
-    if (tempStats.size === 0) {
-      throw new Error("El archivo temporal se escribió con 0 bytes.");
-    }
-
-    JSON.parse(fs.readFileSync(tempFile, "utf-8"));
-
-    // 4. Atomic Swap: Rename .tmp to db.json
-    fs.renameSync(tempFile, DB_FILE);
-    console.log(`[Database Safeguard] Base de datos guardada exitosamente de forma segura. Tamaño: ${tempStats.size} bytes.`);
-  } catch (err: any) {
-    console.error("FATAL: Falló la escritura segura de la base de datos. Intentando revertir...", err);
-    if (fs.existsSync(tempFile)) {
+function readJsonBackup(): DatabaseSchema | null {
+  const backupFile = DB_FILE + ".bak";
+  for (const file of [DB_FILE, backupFile]) {
+    if (fs.existsSync(file)) {
       try {
-        fs.unlinkSync(tempFile);
-      } catch (e) {}
+        const data = fs.readFileSync(file, "utf-8");
+        if (data.trim().length > 10) return JSON.parse(data) as DatabaseSchema;
+      } catch { /* try next */ }
     }
-    throw new Error(`Fallo en la persistencia física de datos: ${err.message}`);
   }
+  return null;
+}
+
+function defaultBranchConfigs(): { [branch: string]: BranchConfig } {
+  return {
+    Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
+    Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
+    Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000 },
+    Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
+    Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
+  };
+}
+
+async function loadFromPostgres(): Promise<DatabaseSchema> {
+  const [
+    usersRows, productsRows, providersRows, ordersRows, closuresRows,
+    walletRows, shrinkagesRows, packagingRows, schedulesRows, loansRows,
+    ratesRows, payrollRows, priceHistoryRows, nequiRows, branchConfigRows,
+  ] = await Promise.all([
+    pgDb.select().from(schema.users),
+    pgDb.select().from(schema.products),
+    pgDb.select().from(schema.providers),
+    pgDb.select().from(schema.orders),
+    pgDb.select().from(schema.closures),
+    pgDb.select().from(schema.walletTransactions),
+    pgDb.select().from(schema.shrinkages),
+    pgDb.select().from(schema.packagingMovements),
+    pgDb.select().from(schema.employeeSchedules),
+    pgDb.select().from(schema.employeeLoans),
+    pgDb.select().from(schema.employeeRates),
+    pgDb.select().from(schema.payrollRecords),
+    pgDb.select().from(schema.priceHistories),
+    pgDb.select().from(schema.nequiExpenses),
+    pgDb.select().from(schema.branchConfigs),
+  ]);
+  const syncLogsRows = await pgDb.select().from(schema.syncLogs);
+
+  const branchConfigsObj: { [branch: string]: BranchConfig } = {};
+  for (const r of branchConfigRows) {
+    branchConfigsObj[r.sucursal] = {
+      baseCaja: r.baseCaja ?? 0,
+      recolectorPredeterminado: r.recolectorPredeterminado ?? "",
+      montoAlerta: r.montoAlerta ?? 0,
+    };
+  }
+
+  return {
+    users: usersRows.map((u): User => ({ Usuario: u.usuario, Contraseña: u.contrasena, Rol: (u.rol as any) || "Sucursal" })),
+    products: productsRows.map((p): Product => ({
+      Codigo: p.codigo, Producto: p.producto, Medida: p.medida || "Kg", Merma: p.merma ?? 0, Utilidad: p.utilidad ?? 0,
+      Proveedor: p.proveedor || "", Celular: p.celular || "", Costo_Proveedor: p.costoProveedor ?? 0,
+      Precio_Venta_Actual: p.precioVentaActual ?? 0, Precio_Anterior: p.precioAnterior ?? 0, Venta_Anterior: p.ventaAnterior ?? 0,
+      Factor_Bulto: p.factorBulto ?? 1, Factor_Canastilla: p.factorCanastilla ?? 1,
+    })),
+    providers: providersRows.map((p): Provider => ({ Proveedor: p.proveedor, Celular: p.celular || "" })),
+    orders: ordersRows.map((o): Order => ({
+      ID_Pedido: o.idPedido, Fecha: o.fecha, Sucursal: o.sucursal, Codigo: o.codigo, Producto: o.producto, Medida: o.medida || "Kg",
+      Cantidad: o.cantidad || "0", Notas: o.notas || "", Precio_Anterior: o.precioAnterior ?? 0, Porcentaje_Ganancia: o.porcentajeGanancia ?? 0,
+      Cantidad_Comprada: o.cantidadComprada ?? 0, Costo_Momento: o.costoMomento ?? 0, Precio_Venta_Momento: o.precioVentaMomento ?? 0,
+      Kilos: o.kilos ?? 0, Estado: (o.estado as any) || "Pendiente", Estado_Pago: (o.estadoPago as any) || "Pendiente",
+      Proveedor: o.proveedor || "", Celular: o.celular || "",
+    })),
+    closures: closuresRows.map((c): DailyClosure => ({
+      Fecha: c.fecha, Sucursal: c.sucursal, Ventas_Totales: c.ventasTotales ?? 0, Gastos_Extra: c.gastosExtra ?? 0,
+      Descripcion_Gastos: c.descripcionGastos || "", Persona_Recogio: c.personaRecogio || "", Recaudado_Fisico: !!c.recaudadoFisico,
+      Foto_Factura: c.fotoFactura || "", Monto_Recaudado: c.montoRecaudado ?? 0,
+    })),
+    walletTransactions: walletRows.map((w): WalletTransaction => ({
+      Fecha: w.fecha, Sucursal: w.sucursal, Tipo_Movimiento: (w.tipoMovimiento as any) || "Gasto", Valor: w.valor ?? 0,
+      Descripcion: w.descripcion || "", Responsable: w.responsable || "", Estado: (w.estado as any) || "Pendiente", Foto_Factura: w.fotoFactura || "",
+    })),
+    shrinkages: shrinkagesRows.map((s): Shrinkage => ({
+      Fecha: s.fecha, Sucursal: s.sucursal, Codigo: s.codigo, Producto: s.producto, Cantidad: s.cantidad || "0", Unidad: s.unidad || "Kg",
+      Motivo: s.motivo || "", Costo_Proveedor: s.costoProveedor ?? 0, Perdida_Monetaria: s.perdidaMonetaria ?? 0, Foto: s.foto || "",
+    })),
+    packagingMovements: packagingRows.map((m): PackagingMovement => ({
+      ID_Movimiento: m.idMovimiento, Fecha: m.fecha, Proveedor: m.proveedor, Tipo_Activo: (m.tipoActivo as any) || "Canastilla",
+      Cantidad_Entregada: m.cantidadEntregada ?? 0, Cantidad_Devuelta: m.cantidadDevuelta ?? 0, Notas: m.notas || "",
+    })),
+    schedules: schedulesRows.map((s): EmployeeSchedule => ({ Fecha: s.fecha, Empleado: s.empleado, Sucursal: s.sucursal, Horas_Trabajadas: s.horasTrabajadas ?? 0 })),
+    loans: loansRows.map((l): EmployeeLoan => ({ Fecha: l.fecha, Empleado: l.empleado, Sucursal: l.sucursal, Monto: l.monto ?? 0, Motivo: l.motivo || "", Estado: (l.estado as any) || "Pendiente" })),
+    rates: ratesRows.map((r): EmployeeRate => ({ Empleado: r.empleado, Valor_Dia: r.valorDia ?? 0, Valor_Hora: r.valorHora ?? 0, Auxilio_Transporte: r.auxilioTransporte ?? 0, Celular: r.celular || "", Cedula: r.cedula || "" })),
+    payroll: payrollRows.map((p): PayrollRecord => ({
+      Fecha: p.fecha, Trabajador: p.trabajador, Sucursal: p.sucursal, Dias_Trabajados: p.diasTrabajados ?? 0, Horas_Trabajadas: p.horasTrabajadas ?? 0,
+      Pago_Base: p.pagoBase ?? 0, Pago_Horas: p.pagoHoras ?? 0, Prestamos_Descontados: p.prestamosDescontados ?? 0, Total_Neto: p.totalNeto ?? 0, Estado_Pago: (p.estadoPago as any) || "Pendiente",
+    })),
+    priceHistory: priceHistoryRows.map((h): PriceHistory => ({
+      Fecha_Hora: h.fechaHora, Codigo: h.codigo, Producto: h.producto, Costo_Anterior: h.costoAnterior ?? 0, Costo_Nuevo: h.costoNuevo ?? 0,
+      Venta_Anterior: h.ventaAnterior ?? 0, Venta_Nueva: h.ventaNueva ?? 0, Usuario: h.usuario || "",
+    })),
+    nequiExpenses: nequiRows.map((n): NequiExpense => ({
+      Fecha: n.fecha, Sucursal: n.sucursal, Valor_Gasto: n.valorGasto ?? 0, Descripcion_Gasto: n.descripcionGasto || "",
+      Responsable: n.responsable || "", Reconciliado_Fisico: !!n.reconciliadoFisico,
+    })),
+    syncLogs: syncLogsRows.map((l): SyncLog => ({
+      id: String(l.id), timestamp: (l.timestamp instanceof Date ? l.timestamp : new Date(l.timestamp as any)).toISOString(),
+      service: "Firebase", action: l.action, status: (l.status as any) || "success", details: l.details || "",
+      itemsCount: l.itemsCount ?? undefined, durationMs: l.durationMs ?? undefined,
+    })),
+    branchConfigs: Object.keys(branchConfigsObj).length > 0 ? branchConfigsObj : defaultBranchConfigs(),
+  };
+}
+
+export async function initDb(): Promise<DatabaseSchema> {
+  let db: DatabaseSchema;
+
+  try {
+    db = await loadFromPostgres();
+    console.log("[Database] Datos cargados exitosamente desde Supabase/PostgreSQL.");
+  } catch (err: any) {
+    console.error("CRITICAL: No se pudo cargar la base de datos desde Supabase/PostgreSQL al iniciar. Usando copia local de respaldo si existe.", err.message || err);
+    db = readJsonBackup() || ({} as DatabaseSchema);
+  }
+
+  // Semillas solo si una colección clave viene completamente vacía (arranque en frío)
+  if (!db.users || db.users.length === 0) db.users = USER_SEED;
+  if (!db.products || db.products.length === 0) db.products = loadInitialProducts();
+  if (!db.providers || db.providers.length === 0) db.providers = PROVIDER_SEED;
+  if (!db.rates || db.rates.length === 0) db.rates = RATES_SEED;
+  db.orders = db.orders || [];
+  db.closures = db.closures || [];
+  db.walletTransactions = db.walletTransactions || [];
+  db.shrinkages = db.shrinkages || [];
+  db.packagingMovements = db.packagingMovements || [];
+  db.schedules = db.schedules || [];
+  db.loans = db.loans || [];
+  db.payroll = db.payroll || [];
+  db.priceHistory = db.priceHistory || [];
+  db.nequiExpenses = db.nequiExpenses || [];
+  db.syncLogs = db.syncLogs || [];
+  db.branchConfigs = db.branchConfigs || defaultBranchConfigs();
+
+  deduplicateSchema(db);
+  ensureRecordIds(db);
+
+  try {
+    writeJsonBackup(db);
+  } catch (err: any) {
+    console.error("No se pudo escribir la copia local de respaldo (no crítico):", err.message || err);
+  }
+
+  return db;
+}
+
+export type CollectionKey = keyof DatabaseSchema;
+
+// Cada colección sabe reemplazar su propia tabla (delete + insert) dentro de una transacción.
+const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Promise<void>> = {
+  users: async (db, tx) => {
+    await tx.delete(schema.users);
+    if (db.users.length > 0) {
+      await tx.insert(schema.users).values(db.users.map((u) => ({ usuario: u.Usuario, contrasena: u.Contraseña || "", rol: u.Rol })));
+    }
+  },
+  products: async (db, tx) => {
+    await tx.delete(schema.products);
+    if (db.products.length > 0) {
+      await tx.insert(schema.products).values(db.products.map((p) => ({
+        codigo: p.Codigo, producto: p.Producto, medida: p.Medida, merma: p.Merma, utilidad: p.Utilidad, proveedor: p.Proveedor,
+        celular: p.Celular, costoProveedor: p.Costo_Proveedor, precioVentaActual: p.Precio_Venta_Actual, precioAnterior: p.Precio_Anterior,
+        ventaAnterior: p.Venta_Anterior, factorBulto: p.Factor_Bulto, factorCanastilla: p.Factor_Canastilla,
+      })));
+    }
+  },
+  providers: async (db, tx) => {
+    await tx.delete(schema.providers);
+    if (db.providers.length > 0) {
+      await tx.insert(schema.providers).values(db.providers.map((p) => ({ proveedor: p.Proveedor, celular: p.Celular })));
+    }
+  },
+  orders: async (db, tx) => {
+    await tx.delete(schema.orders);
+    if (db.orders.length > 0) {
+      await tx.insert(schema.orders).values(db.orders.map((o) => ({
+        idPedido: o.ID_Pedido, fecha: o.Fecha, sucursal: o.Sucursal, codigo: o.Codigo, producto: o.Producto, medida: o.Medida,
+        cantidad: o.Cantidad, notas: o.Notas, precioAnterior: o.Precio_Anterior, porcentajeGanancia: o.Porcentaje_Ganancia,
+        cantidadComprada: o.Cantidad_Comprada, costoMomento: o.Costo_Momento, precioVentaMomento: o.Precio_Venta_Momento,
+        kilos: o.Kilos, estado: o.Estado, estadoPago: o.Estado_Pago, proveedor: o.Proveedor, celular: o.Celular,
+      })));
+    }
+  },
+  closures: async (db, tx) => {
+    await tx.delete(schema.closures);
+    if (db.closures.length > 0) {
+      await tx.insert(schema.closures).values(db.closures.map((c) => ({
+        fecha: c.Fecha, sucursal: c.Sucursal, ventasTotales: c.Ventas_Totales, gastosExtra: c.Gastos_Extra,
+        descripcionGastos: c.Descripcion_Gastos, personaRecogio: c.Persona_Recogio, recaudadoFisico: c.Recaudado_Fisico,
+        fotoFactura: c.Foto_Factura || "", montoRecaudado: c.Monto_Recaudado || 0,
+      })));
+    }
+  },
+  walletTransactions: async (db, tx) => {
+    await tx.delete(schema.walletTransactions);
+    if (db.walletTransactions.length > 0) {
+      await tx.insert(schema.walletTransactions).values(db.walletTransactions.map((w) => ({
+        fecha: w.Fecha, sucursal: w.Sucursal, tipoMovimiento: w.Tipo_Movimiento, valor: w.Valor, descripcion: w.Descripcion,
+        responsable: w.Responsable, estado: w.Estado, fotoFactura: w.Foto_Factura || "",
+      })));
+    }
+  },
+  shrinkages: async (db, tx) => {
+    await tx.delete(schema.shrinkages);
+    if (db.shrinkages.length > 0) {
+      await tx.insert(schema.shrinkages).values(db.shrinkages.map((s) => ({
+        fecha: s.Fecha, sucursal: s.Sucursal, codigo: s.Codigo, producto: s.Producto, cantidad: s.Cantidad, unidad: s.Unidad || "Kg",
+        motivo: s.Motivo, costoProveedor: s.Costo_Proveedor, perdidaMonetaria: s.Perdida_Monetaria, foto: s.Foto || "",
+      })));
+    }
+  },
+  packagingMovements: async (db, tx) => {
+    await tx.delete(schema.packagingMovements);
+    if (db.packagingMovements.length > 0) {
+      await tx.insert(schema.packagingMovements).values(db.packagingMovements.map((m) => ({
+        idMovimiento: m.ID_Movimiento, fecha: m.Fecha, proveedor: m.Proveedor, tipoActivo: m.Tipo_Activo,
+        cantidadEntregada: m.Cantidad_Entregada, cantidadDevuelta: m.Cantidad_Devuelta, notas: m.Notas,
+      })));
+    }
+  },
+  schedules: async (db, tx) => {
+    await tx.delete(schema.employeeSchedules);
+    if (db.schedules.length > 0) {
+      await tx.insert(schema.employeeSchedules).values(db.schedules.map((s) => ({ fecha: s.Fecha, empleado: s.Empleado, sucursal: s.Sucursal, horasTrabajadas: s.Horas_Trabajadas })));
+    }
+  },
+  loans: async (db, tx) => {
+    await tx.delete(schema.employeeLoans);
+    if (db.loans.length > 0) {
+      await tx.insert(schema.employeeLoans).values(db.loans.map((l) => ({ fecha: l.Fecha, empleado: l.Empleado, sucursal: l.Sucursal, monto: l.Monto, motivo: l.Motivo, estado: l.Estado })));
+    }
+  },
+  rates: async (db, tx) => {
+    await tx.delete(schema.employeeRates);
+    if (db.rates.length > 0) {
+      await tx.insert(schema.employeeRates).values(db.rates.map((r) => ({
+        empleado: r.Empleado, valorDia: r.Valor_Dia, valorHora: r.Valor_Hora, auxilioTransporte: r.Auxilio_Transporte || 0,
+        celular: r.Celular || "", cedula: r.Cedula || "",
+      })));
+    }
+  },
+  payroll: async (db, tx) => {
+    await tx.delete(schema.payrollRecords);
+    if (db.payroll.length > 0) {
+      await tx.insert(schema.payrollRecords).values(db.payroll.map((p) => ({
+        fecha: p.Fecha, trabajador: p.Trabajador, sucursal: p.Sucursal, diasTrabajados: p.Dias_Trabajados, horasTrabajadas: p.Horas_Trabajadas,
+        pagoBase: p.Pago_Base, pagoHoras: p.Pago_Horas, prestamosDescontados: p.Prestamos_Descontados, totalNeto: p.Total_Neto, estadoPago: p.Estado_Pago,
+      })));
+    }
+  },
+  priceHistory: async (db, tx) => {
+    await tx.delete(schema.priceHistories);
+    if (db.priceHistory.length > 0) {
+      await tx.insert(schema.priceHistories).values(db.priceHistory.map((h) => ({
+        fechaHora: h.Fecha_Hora, codigo: h.Codigo, producto: h.Producto, costoAnterior: h.Costo_Anterior, costoNuevo: h.Costo_Nuevo,
+        ventaAnterior: h.Venta_Anterior, ventaNueva: h.Venta_Nueva, usuario: h.Usuario,
+      })));
+    }
+  },
+  nequiExpenses: async (db, tx) => {
+    await tx.delete(schema.nequiExpenses);
+    if (db.nequiExpenses.length > 0) {
+      await tx.insert(schema.nequiExpenses).values(db.nequiExpenses.map((n) => ({
+        fecha: n.Fecha, sucursal: n.Sucursal, valorGasto: n.Valor_Gasto, descripcionGasto: n.Descripcion_Gasto,
+        responsable: n.Responsable, reconciliadoFisico: n.Reconciliado_Fisico,
+      })));
+    }
+  },
+  syncLogs: async (db, tx) => {
+    await tx.delete(schema.syncLogs);
+    const logs = db.syncLogs || [];
+    if (logs.length > 0) {
+      await tx.insert(schema.syncLogs).values(logs.map((l) => ({
+        timestamp: new Date(l.timestamp), service: l.service, action: l.action, status: l.status,
+        details: l.details, itemsCount: l.itemsCount || 0, durationMs: l.durationMs || 0,
+      })));
+    }
+  },
+  branchConfigs: async (db, tx) => {
+    await tx.delete(schema.branchConfigs);
+    const configs = Object.entries(db.branchConfigs || {});
+    if (configs.length > 0) {
+      await tx.insert(schema.branchConfigs).values(configs.map(([sucursal, cfg]) => ({
+        sucursal, baseCaja: cfg.baseCaja, recolectorPredeterminado: cfg.recolectorPredeterminado, montoAlerta: cfg.montoAlerta,
+      })));
+    }
+  },
+};
+
+const ALL_COLLECTIONS = Object.keys(TABLE_SYNCERS) as CollectionKey[];
+
+/**
+ * Persiste la base de datos en Supabase/PostgreSQL.
+ * Por rendimiento: si se pasa `only`, únicamente se resincronizan esas colecciones
+ * (evita reescribir tablas grandes como `orders` cuando solo cambió, por ejemplo, `products`).
+ * Si se omite, se resincronizan todas (usado en operaciones masivas: importaciones, limpiezas, etc.).
+ */
+export async function saveDb(db: DatabaseSchema, only?: CollectionKey[]): Promise<void> {
+  deduplicateSchema(db);
+  ensureRecordIds(db);
+
+  // Copia local de respaldo — best-effort, nunca bloquea el guardado real.
+  try {
+    writeJsonBackup(db);
+  } catch (err: any) {
+    console.error("No se pudo escribir la copia local de respaldo (no crítico):", err.message || err);
+  }
+
+  const targets = only && only.length > 0 ? only : ALL_COLLECTIONS;
+  await pgDb.transaction(async (tx) => {
+    for (const key of targets) {
+      await TABLE_SYNCERS[key](db, tx);
+    }
+  });
 }

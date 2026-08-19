@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 import { GoogleGenAI, Type } from "@google/genai";
 import { importCsvToDb } from "./server/import_csv.ts";
@@ -31,7 +31,7 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
  
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -49,21 +49,12 @@ function getColombiaYesterdayDate(): string {
   return d.toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 }
 
-// Initialize file-based database & sync with Cloud Firestore
-const db = initDb();
+// Supabase/PostgreSQL es la fuente de la verdad. Se asigna en startServer(),
+// antes de que el servidor empiece a aceptar peticiones (ver abajo).
+let db: DatabaseSchema;
 
-// Hydrate server DB from Cloud Firestore at startup and sync back
-pullFromFirestore(db).then(() => {
-  console.log("[Firestore] Base de datos servidor sincronizada con Cloud Firestore.");
-  queueFirestoreSync(db);
-}).catch((err) => {
-  console.error("[Firestore] Error al hidratar datos desde Cloud Firestore:", err);
-  queueFirestoreSync(db);
-});
-
-function saveDb(dbData: typeof db) {
-  originalSaveDb(dbData);
-  queueFirestoreSync(dbData);
+async function saveDb(dbData: DatabaseSchema, only?: CollectionKey[]) {
+  await originalSaveDb(dbData, only);
 }
 
 function parseQty(q: any): number {
@@ -103,7 +94,7 @@ function parseQty(q: any): number {
 // Login Routing
 const isBcryptHash = (value: string) => /^\$2[aby]\$/.test(value);
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: "Usuario y contraseña requeridos" });
@@ -128,7 +119,7 @@ app.post("/api/auth/login", (req, res) => {
   if (user) {
     if (!isBcryptHash((user.Contraseña || "").toString().trim())) {
       user.Contraseña = bcrypt.hashSync(inputPassword, 10);
-      saveDb(db);
+      await saveDb(db, ["users"]);
     }
     return res.json({
       Usuario: user.Usuario || user.usuario || user.username || user.Username,
@@ -145,7 +136,7 @@ app.get("/api/users", (req, res) => {
 });
 
 // Branch Configs for cash collection
-app.get("/api/admin/branch-configs", (req, res) => {
+app.get("/api/admin/branch-configs", async (req, res) => {
   if (!db.branchConfigs) {
     db.branchConfigs = {
       Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
@@ -154,12 +145,12 @@ app.get("/api/admin/branch-configs", (req, res) => {
       Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
       Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
     };
-    saveDb(db);
+    await saveDb(db, ["branchConfigs"]);
   }
   res.json(db.branchConfigs);
 });
 
-app.post("/api/admin/branch-configs", (req, res) => {
+app.post("/api/admin/branch-configs", async (req, res) => {
   const { branch, baseCaja, recolectorPredeterminado, montoAlerta } = req.body;
   if (!branch) {
     return res.status(400).json({ error: "Sucursal requerida" });
@@ -175,11 +166,11 @@ app.post("/api/admin/branch-configs", (req, res) => {
     montoAlerta: Number(montoAlerta) || 0,
   };
 
-  saveDb(db);
+  await saveDb(db, ["branchConfigs"]);
   res.json({ success: true, config: db.branchConfigs[branch] });
 });
 
-app.post("/api/users/update-password", (req, res) => {
+app.post("/api/users/update-password", async (req, res) => {
   const { Usuario, Contraseña } = req.body;
   if (!Usuario || !Contraseña) {
     return res.status(400).json({ error: "Usuario y contraseña requeridos" });
@@ -191,7 +182,7 @@ app.post("/api/users/update-password", (req, res) => {
 
   if (userIndex !== -1) {
     db.users[userIndex].Contraseña = bcrypt.hashSync(Contraseña.trim(), 10);
-    saveDb(db);
+    await saveDb(db, ["users"]);
     return res.json({ success: true, message: `Contraseña de ${Usuario} actualizada.` });
   }
 
@@ -245,7 +236,7 @@ app.post("/api/products", async (req, res) => {
   }
 
   db.products.push(newProduct);
-  saveDb(db);
+  await saveDb(db, ["products", "providers"]);
   await saveRecordToFirestoreDirect("products", newProduct);
   res.status(210).json(newProduct);
 });
@@ -292,7 +283,7 @@ app.put("/api/products/:code", async (req, res) => {
     Factor_Canastilla: Factor_Canastilla !== undefined ? parseFloat(Factor_Canastilla) : current.Factor_Canastilla,
   };
 
-  saveDb(db);
+  await saveDb(db, ["products", "priceHistory"]);
   await saveRecordToFirestoreDirect("products", db.products[index]);
   res.json(db.products[index]);
 });
@@ -314,7 +305,7 @@ app.post("/api/providers", async (req, res) => {
 
   const newProvider: Provider = { Proveedor: Proveedor.trim(), Celular: Celular ? String(Celular).trim() : "" };
   db.providers.push(newProvider);
-  saveDb(db);
+  await saveDb(db, ["providers"]);
   await saveBatchToFirestoreDirect([
     { collectionKey: "providers", record: newProvider }
   ]);
@@ -357,7 +348,7 @@ app.put("/api/providers/:name", async (req, res) => {
     }
   });
 
-  saveDb(db);
+  await saveDb(db, ["providers", "products", "orders"]);
   await saveBatchToFirestoreDirect([
     { collectionKey: "providers", record: db.providers[idx] }
   ]);
@@ -376,7 +367,7 @@ app.delete("/api/providers/:name", async (req, res) => {
   }
 
   const deleted = db.providers.splice(idx, 1)[0];
-  saveDb(db);
+  await saveDb(db, ["providers"]);
   res.json({ success: true, deleted });
 });
 
@@ -456,7 +447,7 @@ app.post("/api/orders", async (req, res) => {
     createdOrders.push(newOrder);
   }
 
-  saveDb(db);
+  await saveDb(db, ["orders"]);
   if (createdOrders.length > 0) {
     await saveBatchToFirestoreDirect(createdOrders.map((o) => ({ collectionKey: "orders", record: o })));
     sendOrderSummaryEmail(oid, sucursal, orderDate, createdOrders).catch(err => {
@@ -488,7 +479,7 @@ app.put("/api/orders/:id", async (req, res) => {
     Proveedor: Proveedor || current.Proveedor,
   };
 
-  saveDb(db);
+  await saveDb(db, ["orders"]);
   await saveRecordToFirestoreDirect("orders", db.orders[index]);
   res.json(db.orders[index]);
 });
@@ -513,14 +504,14 @@ app.post("/api/orders/bulk-update", async (req, res) => {
     }
   }
 
-  saveDb(db);
+  await saveDb(db, ["orders"]);
   if (updatedRecords.length > 0) {
     await saveBatchToFirestoreDirect(updatedRecords.map((o) => ({ collectionKey: "orders", record: o })));
   }
   res.json({ success: true });
 });
 
-app.post("/api/admin/matrix-save", (req, res) => {
+app.post("/api/admin/matrix-save", async (req, res) => {
   const { fecha, edits, user } = req.body;
   if (!fecha || !edits) {
     return res.status(400).json({ error: "Fecha y cambios (edits) requeridos" });
@@ -746,7 +737,7 @@ app.post("/api/admin/matrix-save", (req, res) => {
     }
   }
 
-  saveDb(db);
+  await saveDb(db, ["products", "orders", "priceHistory", "providers"]);
   res.json({ success: true });
 });
 
@@ -836,7 +827,7 @@ app.post("/api/closures", async (req, res) => {
       txToSave = newTx;
     }
 
-    saveDb(db);
+    await saveDb(db, ["closures", "walletTransactions"]);
     await saveBatchToFirestoreDirect([
       { collectionKey: "closures", record: closureToSave },
       { collectionKey: "walletTransactions", record: txToSave }
@@ -889,7 +880,7 @@ app.put("/api/closures", async (req, res) => {
       updatedTx = db.walletTransactions[txIdx];
     }
 
-    saveDb(db);
+    await saveDb(db, ["closures", "walletTransactions"]);
 
     const batchItems: { collectionKey: string; record: any }[] = [
       { collectionKey: "closures", record: updatedClosure }
@@ -963,7 +954,7 @@ app.put("/api/closures/reconcile", async (req, res) => {
       }
     }
 
-    saveDb(db);
+    await saveDb(db, ["closures", "walletTransactions"]);
 
     await saveBatchToFirestoreDirect(batchItems);
 
@@ -1068,12 +1059,12 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
     db.walletTransactions.push(newTx);
     batchItems.push({ collectionKey: "walletTransactions", record: newTx });
 
-    saveDb(db);
+    await saveDb(db, ["closures", "walletTransactions"]);
 
     await saveBatchToFirestoreDirect(batchItems);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       totalCollected: customCollected, 
       msg: isPartial
         ? `Se registró un recaudo parcial de ${customCollected} para la sucursal ${Sucursal}`
@@ -1085,7 +1076,7 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
   }
 });
 
-app.post("/api/payroll/schedules/bulk", (req, res) => {
+app.post("/api/payroll/schedules/bulk", async (req, res) => {
   const { schedules, clearEmployee, clearMonth } = req.body;
   if (!schedules || !Array.isArray(schedules)) {
     return res.status(400).json({ error: "Arreglo de horarios es requerido" });
@@ -1118,7 +1109,7 @@ app.post("/api/payroll/schedules/bulk", (req, res) => {
     db.schedules.push(newSched);
   });
 
-  saveDb(db);
+  await saveDb(db, ["schedules"]);
   res.json({ success: true, count: schedules.length });
 });
 
@@ -1227,7 +1218,7 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
 
   db.nequiExpenses.push(newExpense);
 
-  saveDb(db);
+  await saveDb(db, ["walletTransactions", "nequiExpenses"]);
 
   await saveBatchToFirestoreDirect([
     { collectionKey: "walletTransactions", record: newTx },
@@ -1258,7 +1249,7 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
   };
 
   db.walletTransactions.push(newTx);
-  saveDb(db);
+  await saveDb(db, ["walletTransactions"]);
 
   await saveRecordToFirestoreDirect("walletTransactions", newTx);
 
@@ -1337,7 +1328,7 @@ app.post("/api/shrinkages", async (req, res) => {
   };
 
   db.shrinkages.push(newShrinkage);
-  saveDb(db);
+  await saveDb(db, ["shrinkages"]);
   await saveRecordToFirestoreDirect("shrinkages", newShrinkage);
   res.status(210).json(newShrinkage);
 });
@@ -1364,7 +1355,7 @@ app.post("/api/packaging", async (req, res) => {
   };
 
   db.packagingMovements.push(newMovement);
-  saveDb(db);
+  await saveDb(db, ["packagingMovements"]);
   await saveRecordToFirestoreDirect("packagingMovements", newMovement);
   res.status(210).json(newMovement);
 });
@@ -1397,7 +1388,7 @@ app.post("/api/payroll/rates", async (req, res) => {
     Cedula: Cedula || ""
   };
   db.rates.push(newRate);
-  saveDb(db);
+  await saveDb(db, ["rates"]);
   await saveRecordToFirestoreDirect("rates", newRate);
   res.status(210).json(newRate);
 });
@@ -1438,7 +1429,7 @@ app.put("/api/payroll/rates/:name", async (req, res) => {
     Cedula: Cedula !== undefined ? Cedula : db.rates[index].Cedula
   };
 
-  saveDb(db);
+  await saveDb(db, ["rates"]);
   await saveRecordToFirestoreDirect("rates", db.rates[index]);
   res.json(db.rates[index]);
 });
@@ -1450,7 +1441,7 @@ app.delete("/api/payroll/rates/:name", async (req, res) => {
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
   const deleted = db.rates.splice(index, 1)[0];
-  saveDb(db);
+  await saveDb(db, ["rates"]);
   await deleteRecordFromFirestoreDirect("rates", deleted);
   res.json({ success: true });
 });
@@ -1469,7 +1460,7 @@ app.post("/api/payroll/schedule", async (req, res) => {
   };
 
   db.schedules.push(newSched);
-  saveDb(db);
+  await saveDb(db, ["schedules"]);
   await saveRecordToFirestoreDirect("schedules", newSched);
   res.status(210).json(newSched);
 });
@@ -1496,7 +1487,7 @@ app.post("/api/payroll/schedule/save", async (req, res) => {
   };
 
   db.schedules.push(newSched);
-  saveDb(db);
+  await saveDb(db, ["schedules"]);
 
   for (const ds of deletedScheds) {
     await deleteRecordFromFirestoreDirect("schedules", ds);
@@ -1520,7 +1511,7 @@ app.post("/api/payroll/schedule/delete", async (req, res) => {
     (s) => !(s.Fecha === Fecha && s.Empleado.toLowerCase() === Empleado.toLowerCase())
   );
 
-  saveDb(db);
+  await saveDb(db, ["schedules"]);
 
   for (const ds of deletedScheds) {
     await deleteRecordFromFirestoreDirect("schedules", ds);
@@ -1545,7 +1536,7 @@ app.post("/api/payroll/loan", async (req, res) => {
   };
 
   db.loans.push(newLoan);
-  saveDb(db);
+  await saveDb(db, ["loans"]);
   await saveRecordToFirestoreDirect("loans", newLoan);
   res.status(210).json(newLoan);
 });
@@ -1625,7 +1616,7 @@ app.post("/api/payroll/generate", async (req, res) => {
   };
 
   db.payroll.push(newPayroll);
-  saveDb(db);
+  await saveDb(db, ["payroll", "loans"]);
   await saveRecordToFirestoreDirect("payroll", newPayroll);
   res.status(210).json(newPayroll);
 });
@@ -1635,7 +1626,7 @@ app.post("/api/payroll/pay", async (req, res) => {
   const idx = db.payroll.findIndex((p) => p.Trabajador === Trabajador && p.Fecha === Fecha);
   if (idx !== -1) {
     db.payroll[idx].Estado_Pago = "Pagado";
-    saveDb(db);
+    await saveDb(db, ["payroll"]);
     await saveRecordToFirestoreDirect("payroll", db.payroll[idx]);
     return res.json(db.payroll[idx]);
   }
@@ -1652,12 +1643,12 @@ app.delete("/api/products/:code", async (req, res) => {
     return res.status(404).json({ error: "Producto no encontrado en el catálogo." });
   }
   const deleted = db.products.splice(index, 1)[0];
-  saveDb(db);
+  await saveDb(db, ["products"]);
   await deleteRecordFromFirestoreDirect("products", deleted);
   res.json({ success: true, deleted });
 });
 
-app.post("/api/admin/import-csv-orders", (req, res) => {
+app.post("/api/admin/import-csv-orders", async (req, res) => {
   const { csvText, fecha } = req.body;
   if (!csvText || typeof csvText !== "string" || !csvText.trim()) {
     return res.status(400).json({ error: "No se proporcionó el texto de los pedidos." });
@@ -1815,7 +1806,7 @@ app.post("/api/admin/import-csv-orders", (req, res) => {
     }
   });
 
-  saveDb(db);
+  await saveDb(db, ["orders", "providers"]);
   res.json({ success: true, count: importedCount, date: orderDate });
 });
 
@@ -1833,7 +1824,7 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
     db.nequiExpenses = [];
     if (db.syncLogs) db.syncLogs = [];
 
-    saveDb(db);
+    await saveDb(db);
 
     await clearFirestoreOperationalCollections();
 
@@ -1846,7 +1837,7 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
       0,
       0
     );
-    saveDb(db);
+    await saveDb(db, ["syncLogs"]);
 
     res.json({
       success: true,
@@ -1861,8 +1852,11 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
 app.post("/api/admin/clear-past-months-history", async (req, res) => {
   try {
     const result = await purgePastMonthsOrdersAndClosures(db);
-    saveDb(db);
+    await saveDb(db, ["orders", "closures"]);
     recordSyncLog(
+      db,
+      "Firebase",
+      "Limpieza de Históricos",
       "success",
       `Limpieza de históricos completada: se eliminaron registros de meses anteriores en pedidos y cierres (${result.deletedOrdersCount} pedidos, ${result.deletedClosuresCount} cierres).`,
       result.deletedOrdersCount + result.deletedClosuresCount,
@@ -1881,7 +1875,7 @@ app.post("/api/admin/clear-past-months-history", async (req, res) => {
 });
 
 
-app.post("/api/test/run", (req, res) => {
+app.post("/api/test/run", async (req, res) => {
   try {
     // Reset/Clear relevant tables for a clean test state
     db.orders = [];
@@ -2038,7 +2032,7 @@ app.post("/api/test/run", (req, res) => {
       });
     }
 
-    saveDb(db);
+    await saveDb(db);
 
     res.json({
       success: true,
@@ -2065,9 +2059,9 @@ app.get("/api/sync-logs", (req, res) => {
   res.json(db.syncLogs || []);
 });
 
-app.post("/api/sync-logs/clear", (req, res) => {
+app.post("/api/sync-logs/clear", async (req, res) => {
   db.syncLogs = [];
-  saveDb(db);
+  await saveDb(db, ["syncLogs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
 });
 
@@ -2082,7 +2076,7 @@ app.post("/api/firebase/sync", async (req, res) => {
     
     // Descargar/actualizar datos sincronizados desde Cloud Firestore
     await pullFromFirestore(db);
-    saveDb(db);
+    await saveDb(db);
     
     const durationMs = Date.now() - startTime;
     const count = (db.orders?.length || 0) + (db.closures?.length || 0) + (db.products?.length || 0);
@@ -2095,7 +2089,7 @@ app.post("/api/firebase/sync", async (req, res) => {
       count, 
       durationMs
     );
-    saveDb(db);
+    await saveDb(db, ["syncLogs"]);
     res.json({
       success: true,
       synced: syncedCount,
@@ -2119,7 +2113,7 @@ app.post("/api/firebase/sync", async (req, res) => {
       0, 
       Date.now() - startTime
     );
-    saveDb(db);
+    await saveDb(db, ["syncLogs"]);
     res.status(500).json({ error: err.message || "Error al sincronizar con Firebase" });
   }
 });
@@ -2132,7 +2126,11 @@ app.get("/logo_al_paso.png", (req, res) => {
 });
 
 async function startServer() {
-  console.log("[Startup] Iniciando servidor Al Paso en modo local autónomo...");
+  console.log("[Startup] Iniciando servidor Al Paso...");
+
+  // 1. Cargar la base de datos desde Supabase/PostgreSQL antes de aceptar peticiones
+  db = await initDb();
+  console.log(`[Startup] Base de datos lista: ${db.products.length} productos, ${db.orders.length} pedidos.`);
 
   // 3. Iniciar middlewares frontend
   if (process.env.NODE_ENV !== "production") {
