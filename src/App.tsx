@@ -145,7 +145,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#FBF7EE] flex flex-col font-sans">
       {/* Visual Feedback Banner: Sincronizando... con barra de progreso visual */}
       {syncing && (
         <div className="fixed top-0 left-0 right-0 z-[100] bg-slate-900/95 backdrop-blur-md text-white border-b border-amber-500/30 shadow-xl px-4 py-2.5 text-xs transition-all duration-300">
@@ -223,16 +223,13 @@ export default function App() {
       )}
 
       {/* Global Navbar */}
-      <nav className="bg-white border-b border-slate-200/80 shadow-sm sticky top-0 z-50">
+      <nav className="bg-white border-b border-[#E7DFCB] shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex justify-between items-center">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🥑</span>
-            <div>
-              <span className="font-extrabold text-slate-800 text-lg tracking-tight">Al Paso</span>
-              <span className="hidden sm:inline-block ml-1.5 px-1.5 py-0.5 bg-slate-100 text-slate-500 font-bold text-[9px] rounded-md uppercase">
-                v9.0
-              </span>
-            </div>
+            <img src="/logo_al_paso.png" alt="Al Paso" className="h-9 w-auto" />
+            <span className="hidden sm:inline-block px-1.5 py-0.5 bg-[#1F7A4D]/10 text-[#1F7A4D] font-bold text-[9px] rounded-md uppercase">
+              v9.0
+            </span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -244,7 +241,7 @@ export default function App() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer ${
                 syncing
                   ? "bg-amber-100 text-amber-800 border border-amber-300"
-                  : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                  : "bg-[#1F7A4D] text-white hover:bg-[#186640] shadow-xs"
               }`}
               title="Forzar Sincronización Completa con Firestore (forceSync)"
             >
@@ -276,11 +273,11 @@ export default function App() {
               </span>
             </button>
 
-            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-50 border border-slate-150 rounded-2xl">
-              <UserIcon className="w-4 h-4 text-slate-500" />
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-[#FBF7EE] border border-[#E7DFCB] rounded-2xl">
+              <UserIcon className="w-4 h-4 text-[#1F7A4D]" />
               <div className="text-left">
-                <div className="text-xs font-extrabold text-slate-850 leading-none">{user.Usuario}</div>
-                <div className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase tracking-wider">
+                <div className="text-xs font-extrabold text-[#2A3B2E] leading-none">{user.Usuario}</div>
+                <div className="text-[9px] font-bold text-[#8A7F63] mt-0.5 uppercase tracking-wider">
                   {user.Rol === "Admin" ? "Administrador" : user.Rol === "Comprador" ? "Comprador Plaza" : "Sucursal"}
                 </div>
               </div>
@@ -288,7 +285,7 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+              className="p-2 text-[#8A7F63] hover:text-[#D63B2F] hover:bg-[#D63B2F]/[0.06] rounded-xl transition cursor-pointer"
               title="Cerrar Sesión"
             >
               <LogOut className="w-5 h-5" />

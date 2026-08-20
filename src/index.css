@@ -4,12 +4,76 @@
 @theme {
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Marca Al Paso: neutro cálido (antes "slate" genérico frío).
+     Incluye los matices intermedios (150/450/550/650/750/850) que el
+     código ya usaba pero que nunca se habían definido, así que no
+     pintaban nada. */
+  --color-slate-50: #fbf7ee;
+  --color-slate-100: #f5f0e3;
+  --color-slate-150: #efe8d5;
+  --color-slate-200: #e7dfcb;
+  --color-slate-300: #d6cbae;
+  --color-slate-400: #b8ad8d;
+  --color-slate-450: #a69c7e;
+  --color-slate-500: #8a7f63;
+  --color-slate-550: #766c54;
+  --color-slate-600: #6b6350;
+  --color-slate-650: #5c5544;
+  --color-slate-700: #4a453a;
+  --color-slate-750: #3f3b32;
+  --color-slate-800: #332f28;
+  --color-slate-850: #2b2820;
+  --color-slate-900: #23201a;
+  --color-slate-950: #171512;
+
+  /* Marca Al Paso: verde bosque del logo (antes "emerald" genérico) */
+  --color-emerald-50: #eaf6ef;
+  --color-emerald-100: #d2ecdd;
+  --color-emerald-150: #c0e3d0;
+  --color-emerald-200: #a8dabe;
+  --color-emerald-300: #7bc69c;
+  --color-emerald-400: #4fa97a;
+  --color-emerald-500: #2f8e5d;
+  --color-emerald-550: #268653;
+  --color-emerald-600: #1f7a4d;
+  --color-emerald-700: #186640;
+  --color-emerald-800: #145334;
+  --color-emerald-900: #11402a;
+  --color-emerald-950: #082417;
+
+  /* Rojo del logo, usado para errores/alertas (antes "rose" genérico) */
+  --color-rose-50: #fdf0ee;
+  --color-rose-100: #fadeda;
+  --color-rose-150: #f7cbc4;
+  --color-rose-200: #f2b3a9;
+  --color-rose-250: #ec9c8e;
+  --color-rose-300: #e88c7c;
+  --color-rose-400: #de6754;
+  --color-rose-500: #da4f3f;
+  --color-rose-550: #d8452f;
+  --color-rose-600: #d63b2f;
+  --color-rose-650: #c22f24;
+  --color-rose-700: #b32a20;
+  --color-rose-750: #9f241c;
+  --color-rose-800: #8a1f18;
+  --color-rose-900: #691810;
+  --color-rose-950: #3d0d09;
+
+  /* Ámbar/amarillo del logo para advertencias (rellena matices faltantes) */
+  --color-amber-150: #fee8ac;
+
+  /* Índigo se mantiene como acento secundario; solo se rellenan matices faltantes */
+  --color-indigo-150: #d5dcfc;
+  --color-indigo-550: #5a53e0;
+  --color-indigo-650: #473fd0;
+  --color-indigo-750: #3d34b5;
 }
 
 html, body, #root {
   font-family: var(--font-sans);
-  background-color: #f8fafc;
-  color: #1e293b;
+  background-color: var(--color-slate-50);
+  color: var(--color-slate-800);
   min-height: 100vh;
 }
 
@@ -22,9 +86,9 @@ html, body, #root {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-slate-300);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--color-slate-450);
 }
