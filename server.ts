@@ -2044,16 +2044,15 @@ app.post("/api/sync-logs/clear", async (req, res) => {
 app.post("/api/firebase/sync", async (req, res) => {
   const startTime = Date.now();
   try {
-    const { pullFromFirestore, syncAllLocalCollectionsToFirestore } = await import("./server/firebase.ts");
-    console.log("[API Firebase Sync] Sincronización forzada solicitada...");
-    
-    // Forzar guardado con setDoc ({ merge: true }) de todas las colecciones locales
+    const { syncAllLocalCollectionsToFirestore } = await import("./server/firebase.ts");
+    console.log("[API Firebase Sync] Respaldo forzado hacia Firestore solicitado...");
+
+    // Solo empuja el estado actual (Postgres) hacia Firestore como respaldo de solo lectura.
+    // Nunca se lee de vuelta desde Firestore: Postgres es la única fuente de la verdad, y
+    // Firestore puede tener datos desactualizados de antes de la migración que corromperían
+    // el estado real si se volvieran a cargar.
     const syncedCount = await syncAllLocalCollectionsToFirestore(db);
-    
-    // Descargar/actualizar datos sincronizados desde Cloud Firestore
-    await pullFromFirestore(db);
-    await saveDb(db);
-    
+
     const durationMs = Date.now() - startTime;
     const count = (db.orders?.length || 0) + (db.closures?.length || 0) + (db.products?.length || 0);
     recordSyncLog(
