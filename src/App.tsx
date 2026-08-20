@@ -5,7 +5,6 @@ import SucursalDashboard from "./components/SucursalDashboard";
 import CompradorDashboard from "./components/CompradorDashboard";
 import AdminDashboard from "./components/AdminDashboard";
 import { runStorageIntegrityCheck, IntegrityReport } from "./utils/integrityCheck";
-import { subscribeSyncLogs, SyncLogEvent, forceSync } from "./firebase";
 
 interface SessionUser {
   Usuario: string;
@@ -14,40 +13,11 @@ interface SessionUser {
 
 export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<{
-    percentage: number;
-    collectionName: string;
-    details?: string;
-  }>({
-    percentage: 0,
-    collectionName: "Iniciando...",
-    details: "Conectando con Cloud Firestore..."
-  });
   const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [lastGlobalSync, setLastGlobalSync] = useState(Date.now());
+  const [lastGlobalSync] = useState(Date.now());
   const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
   const [showIntegrityModal, setShowIntegrityModal] = useState(false);
   const [integrityAlert, setIntegrityAlert] = useState<string | null>(null);
-  const [syncLogsList, setSyncLogsList] = useState<SyncLogEvent[]>([]);
-
-  // Escuchar eventos del motor de sincronización de Firebase en tiempo real
-  useEffect(() => {
-    const unsub = subscribeSyncLogs((logs) => {
-      setSyncLogsList(logs);
-      const latest = logs[0];
-      if (latest) {
-        if (latest.tipo === "ERROR") {
-          setSyncMessage({ type: "error", text: latest.mensaje });
-          setTimeout(() => setSyncMessage(null), 6000);
-        } else if (latest.tipo === "PENDIENTE_OFFLINE") {
-          setSyncMessage({ type: "success", text: latest.mensaje });
-          setTimeout(() => setSyncMessage(null), 3000);
-        }
-      }
-    });
-    return unsub;
-  }, []);
 
   // Run integrity check & load session from localStorage on startup/reload
   useEffect(() => {
@@ -90,11 +60,6 @@ export default function App() {
     setTimeout(() => setSyncMessage(null), 4000);
   };
 
-  // Modo Local Autónomo: No se realizan llamadas periódicas a APIs externas
-  useEffect(() => {
-    // Sincronización e hidratación puramente local
-  }, [user]);
-
   const handleLoginSuccess = (loggedInUser: SessionUser) => {
     setUser(loggedInUser);
     localStorage.setItem("alpaso_session", JSON.stringify(loggedInUser));
@@ -105,41 +70,6 @@ export default function App() {
     localStorage.removeItem("alpaso_session");
   };
 
-  const handleSyncAll = async () => {
-    setSyncing(true);
-    setSyncProgress({
-      percentage: 5,
-      collectionName: "IndexedDB / Cola Local",
-      details: "Verificando pendientes locales..."
-    });
-    setSyncMessage({ type: "success", text: "Iniciando sincronización de colecciones..." });
-    try {
-      const result = await forceSync((progress) => {
-        setSyncProgress(progress);
-      });
-      setSyncProgress({
-        percentage: 100,
-        collectionName: "Completado",
-        details: `${result.syncedCount} registros confirmados`
-      });
-      setSyncMessage({
-        type: "success",
-        text: `¡Sincronización completada! (${result.syncedCount} registros confirmados en Firestore)`
-      });
-      setTimeout(() => {
-        setSyncMessage(null);
-      }, 4000);
-    } catch (err: any) {
-      console.error(err);
-      setSyncMessage({ type: "error", text: `Error en la sincronización: ${err?.message || err}` });
-      setTimeout(() => setSyncMessage(null), 5000);
-    } finally {
-      setTimeout(() => {
-        setSyncing(false);
-      }, 600);
-    }
-  };
-
   if (!user) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
@@ -147,44 +77,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#FBF7EE] flex flex-col font-sans">
       {/* Visual Feedback Banner: Sincronizando... con barra de progreso visual */}
-      {syncing && (
-        <div className="fixed top-0 left-0 right-0 z-[100] bg-slate-900/95 backdrop-blur-md text-white border-b border-amber-500/30 shadow-xl px-4 py-2.5 text-xs transition-all duration-300">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
-            {/* Estado y Colección Activa */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="relative flex items-center justify-center shrink-0">
-                <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 truncate">
-                <span className="font-extrabold text-slate-100 tracking-tight">Sincronización Bidireccional</span>
-                <span className="hidden sm:inline text-slate-500">•</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-[11px] font-bold shrink-0">
-                  {syncProgress.collectionName}
-                </span>
-                {syncProgress.details && (
-                  <span className="text-slate-400 text-[11px] truncate hidden lg:inline">
-                    ({syncProgress.details})
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Barra de Progreso Visual */}
-            <div className="w-full md:w-80 flex items-center gap-3 shrink-0">
-              <div className="flex-1 bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700/80 p-0.5 relative shadow-inner">
-                <div
-                  className="bg-gradient-to-r from-amber-500 via-amber-400 to-emerald-400 h-full rounded-full transition-all duration-300 ease-out shadow-xs"
-                  style={{ width: `${Math.max(4, Math.min(100, syncProgress.percentage))}%` }}
-                />
-              </div>
-              <span className="font-mono text-amber-400 font-extrabold text-xs w-10 text-right shrink-0">
-                {Math.round(syncProgress.percentage)}%
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Toast notifications */}
       {syncMessage && (
         <div className="fixed top-20 right-4 z-50 animate-bounce">
@@ -233,22 +125,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Force Sync Button */}
-            <button
-              id="forceSyncNavBtn"
-              onClick={handleSyncAll}
-              disabled={syncing}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer ${
-                syncing
-                  ? "bg-amber-100 text-amber-800 border border-amber-300"
-                  : "bg-[#1F7A4D] text-white hover:bg-[#186640] shadow-xs"
-              }`}
-              title="Forzar Sincronización Completa con Firestore (forceSync)"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-              <span>{syncing ? "Sincronizando..." : "Sincronizar"}</span>
-            </button>
-
             {/* Storage Integrity Badge */}
             <button
               onClick={() => setShowIntegrityModal(true)}

@@ -3,9 +3,8 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
-import { saveRecordToFirestoreDirect, saveBatchToFirestoreDirect, deleteRecordFromFirestoreDirect, clearFirestoreOperationalCollections, purgePastMonthsOrdersAndClosures } from "./server/firebase.ts";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -213,7 +212,6 @@ app.post("/api/products", async (req, res) => {
 
   db.products.push(newProduct);
   await saveDb(db, ["products", "providers"]);
-  await saveRecordToFirestoreDirect("products", newProduct);
   res.status(210).json(newProduct);
 });
 
@@ -260,7 +258,6 @@ app.put("/api/products/:code", async (req, res) => {
   };
 
   await saveDb(db, ["products", "priceHistory"]);
-  await saveRecordToFirestoreDirect("products", db.products[index]);
   res.json(db.products[index]);
 });
 
@@ -282,9 +279,6 @@ app.post("/api/providers", async (req, res) => {
   const newProvider: Provider = { Proveedor: Proveedor.trim(), Celular: Celular ? String(Celular).trim() : "" };
   db.providers.push(newProvider);
   await saveDb(db, ["providers"]);
-  await saveBatchToFirestoreDirect([
-    { collectionKey: "providers", record: newProvider }
-  ]);
   res.status(210).json(newProvider);
 });
 
@@ -325,9 +319,6 @@ app.put("/api/providers/:name", async (req, res) => {
   });
 
   await saveDb(db, ["providers", "products", "orders"]);
-  await saveBatchToFirestoreDirect([
-    { collectionKey: "providers", record: db.providers[idx] }
-  ]);
 
   res.json({ success: true, provider: db.providers[idx] });
 });
@@ -425,7 +416,6 @@ app.post("/api/orders", async (req, res) => {
 
   await saveDb(db, ["orders"]);
   if (createdOrders.length > 0) {
-    await saveBatchToFirestoreDirect(createdOrders.map((o) => ({ collectionKey: "orders", record: o })));
     sendOrderSummaryEmail(oid, sucursal, orderDate, createdOrders).catch(err => {
       console.error("Failed to automatically send order summary email:", err);
     });
@@ -456,7 +446,6 @@ app.put("/api/orders/:id", async (req, res) => {
   };
 
   await saveDb(db, ["orders"]);
-  await saveRecordToFirestoreDirect("orders", db.orders[index]);
   res.json(db.orders[index]);
 });
 
@@ -482,7 +471,6 @@ app.post("/api/orders/bulk-update", async (req, res) => {
 
   await saveDb(db, ["orders"]);
   if (updatedRecords.length > 0) {
-    await saveBatchToFirestoreDirect(updatedRecords.map((o) => ({ collectionKey: "orders", record: o })));
   }
   res.json({ success: true });
 });
@@ -784,11 +772,9 @@ app.post("/api/closures", async (req, res) => {
       (t) => t && t.Fecha === closureDate && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && String(t.Descripcion || "").includes("Cierre")
     );
 
-    let txToSave: WalletTransaction;
     if (txIdx !== -1) {
       db.walletTransactions[txIdx].Valor = neto;
       db.walletTransactions[txIdx].Responsable = collector;
-      txToSave = db.walletTransactions[txIdx];
     } else {
       const newTx: WalletTransaction = {
         Fecha: closureDate,
@@ -800,14 +786,9 @@ app.post("/api/closures", async (req, res) => {
         Estado: "Pendiente",
       };
       db.walletTransactions.push(newTx);
-      txToSave = newTx;
     }
 
     await saveDb(db, ["closures", "walletTransactions"]);
-    await saveBatchToFirestoreDirect([
-      { collectionKey: "closures", record: closureToSave },
-      { collectionKey: "walletTransactions", record: txToSave }
-    ]);
 
     res.status(200).json(closureToSave);
   } catch (err: any) {
@@ -847,25 +828,14 @@ app.put("/api/closures", async (req, res) => {
     const txIdx = db.walletTransactions.findIndex(
       (t) => t && t.Fecha === Fecha && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso"
     );
-    let updatedTx: WalletTransaction | null = null;
     if (txIdx !== -1) {
       db.walletTransactions[txIdx].Valor = neto;
       if (Persona_Recogio) {
         db.walletTransactions[txIdx].Responsable = Persona_Recogio;
       }
-      updatedTx = db.walletTransactions[txIdx];
     }
 
     await saveDb(db, ["closures", "walletTransactions"]);
-
-    const batchItems: { collectionKey: string; record: any }[] = [
-      { collectionKey: "closures", record: updatedClosure }
-    ];
-    if (updatedTx) {
-      batchItems.push({ collectionKey: "walletTransactions", record: updatedTx });
-    }
-
-    await saveBatchToFirestoreDirect(batchItems);
 
     res.json(updatedClosure);
   } catch (err: any) {
@@ -896,9 +866,6 @@ app.put("/api/closures/reconcile", async (req, res) => {
     }
 
     const updatedClosure = db.closures[index];
-    const batchItems: { collectionKey: string; record: any }[] = [
-      { collectionKey: "closures", record: updatedClosure }
-    ];
 
     // Reconcile corresponding wallet transaction for this branch
     const txIdx = db.walletTransactions.findIndex(
@@ -906,7 +873,6 @@ app.put("/api/closures/reconcile", async (req, res) => {
     );
     if (txIdx !== -1) {
       db.walletTransactions[txIdx].Estado = isConfirmed ? "Reconciliado" : "Pendiente";
-      batchItems.push({ collectionKey: "walletTransactions", record: db.walletTransactions[txIdx] });
     }
 
     // Record entry in Central / Nequi when confirmed
@@ -926,13 +892,10 @@ app.put("/api/closures/reconcile", async (req, res) => {
           Estado: "Reconciliado"
         };
         db.walletTransactions.push(centralTx);
-        batchItems.push({ collectionKey: "walletTransactions", record: centralTx });
       }
     }
 
     await saveDb(db, ["closures", "walletTransactions"]);
-
-    await saveBatchToFirestoreDirect(batchItems);
 
     res.json(updatedClosure);
   } catch (err: any) {
@@ -954,15 +917,12 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
       (c) => c && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && !c.Recaudado_Fisico
     );
 
-    const batchItems: { collectionKey: string; record: any }[] = [];
-
     // Reconcile and subtract pending "Gasto" wallet transactions for this branch
     let totalPendingExpenses = 0;
     db.walletTransactions.forEach((t) => {
       if (t && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Gasto" && t.Estado === "Pendiente") {
         totalPendingExpenses += t.Valor;
         t.Estado = "Reconciliado";
-        batchItems.push({ collectionKey: "walletTransactions", record: t });
       }
     });
 
@@ -970,7 +930,6 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
     db.walletTransactions.forEach((t) => {
       if (t && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && t.Estado !== "Reconciliado") {
         t.Estado = "Reconciliado";
-        batchItems.push({ collectionKey: "walletTransactions", record: t });
       }
     });
 
@@ -1007,14 +966,12 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
           c.Monto_Recaudado = currentRecaudado + remainingToAllocate;
           remainingToAllocate = 0;
         }
-        batchItems.push({ collectionKey: "closures", record: c });
       });
     } else {
       db.closures.forEach((c) => {
         if (c && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && !c.Recaudado_Fisico) {
           c.Recaudado_Fisico = true;
           c.Monto_Recaudado = c.Ventas_Totales - c.Gastos_Extra;
-          batchItems.push({ collectionKey: "closures", record: c });
         }
       });
     }
@@ -1033,11 +990,8 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
       Estado: "Reconciliado"
     };
     db.walletTransactions.push(newTx);
-    batchItems.push({ collectionKey: "walletTransactions", record: newTx });
 
     await saveDb(db, ["closures", "walletTransactions"]);
-
-    await saveBatchToFirestoreDirect(batchItems);
 
     res.json({
       success: true,
@@ -1196,11 +1150,6 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
 
   await saveDb(db, ["walletTransactions", "nequiExpenses"]);
 
-  await saveBatchToFirestoreDirect([
-    { collectionKey: "walletTransactions", record: newTx },
-    { collectionKey: "nequiExpenses", record: newExpense }
-  ]);
-
   res.status(210).json(newTx);
 });
 
@@ -1227,7 +1176,6 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
   db.walletTransactions.push(newTx);
   await saveDb(db, ["walletTransactions"]);
 
-  await saveRecordToFirestoreDirect("walletTransactions", newTx);
 
   res.status(210).json(newTx);
 });
@@ -1305,7 +1253,6 @@ app.post("/api/shrinkages", async (req, res) => {
 
   db.shrinkages.push(newShrinkage);
   await saveDb(db, ["shrinkages"]);
-  await saveRecordToFirestoreDirect("shrinkages", newShrinkage);
   res.status(210).json(newShrinkage);
 });
 
@@ -1332,7 +1279,6 @@ app.post("/api/packaging", async (req, res) => {
 
   db.packagingMovements.push(newMovement);
   await saveDb(db, ["packagingMovements"]);
-  await saveRecordToFirestoreDirect("packagingMovements", newMovement);
   res.status(210).json(newMovement);
 });
 
@@ -1365,7 +1311,6 @@ app.post("/api/payroll/rates", async (req, res) => {
   };
   db.rates.push(newRate);
   await saveDb(db, ["rates"]);
-  await saveRecordToFirestoreDirect("rates", newRate);
   res.status(210).json(newRate);
 });
 
@@ -1406,7 +1351,6 @@ app.put("/api/payroll/rates/:name", async (req, res) => {
   };
 
   await saveDb(db, ["rates"]);
-  await saveRecordToFirestoreDirect("rates", db.rates[index]);
   res.json(db.rates[index]);
 });
 
@@ -1416,9 +1360,8 @@ app.delete("/api/payroll/rates/:name", async (req, res) => {
   if (index === -1) {
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
-  const deleted = db.rates.splice(index, 1)[0];
+  db.rates.splice(index, 1);
   await saveDb(db, ["rates"]);
-  await deleteRecordFromFirestoreDirect("rates", deleted);
   res.json({ success: true });
 });
 
@@ -1437,7 +1380,6 @@ app.post("/api/payroll/schedule", async (req, res) => {
 
   db.schedules.push(newSched);
   await saveDb(db, ["schedules"]);
-  await saveRecordToFirestoreDirect("schedules", newSched);
   res.status(210).json(newSched);
 });
 
@@ -1446,10 +1388,6 @@ app.post("/api/payroll/schedule/save", async (req, res) => {
   if (!Empleado || !Sucursal || Horas_Trabajadas === undefined || !Fecha) {
     return res.status(400).json({ error: "Fecha, Empleado, Sucursal y Horas son requeridos" });
   }
-
-  const deletedScheds = db.schedules.filter(
-    (s) => s.Fecha === Fecha && s.Empleado.toLowerCase() === Empleado.toLowerCase()
-  );
 
   db.schedules = db.schedules.filter(
     (s) => !(s.Fecha === Fecha && s.Empleado.toLowerCase() === Empleado.toLowerCase())
@@ -1465,11 +1403,6 @@ app.post("/api/payroll/schedule/save", async (req, res) => {
   db.schedules.push(newSched);
   await saveDb(db, ["schedules"]);
 
-  for (const ds of deletedScheds) {
-    await deleteRecordFromFirestoreDirect("schedules", ds);
-  }
-  await saveRecordToFirestoreDirect("schedules", newSched);
-
   res.json({ success: true, schedule: newSched });
 });
 
@@ -1479,19 +1412,11 @@ app.post("/api/payroll/schedule/delete", async (req, res) => {
     return res.status(400).json({ error: "Fecha y Empleado son requeridos" });
   }
 
-  const deletedScheds = db.schedules.filter(
-    (s) => s.Fecha === Fecha && s.Empleado.toLowerCase() === Empleado.toLowerCase()
-  );
-
   db.schedules = db.schedules.filter(
     (s) => !(s.Fecha === Fecha && s.Empleado.toLowerCase() === Empleado.toLowerCase())
   );
 
   await saveDb(db, ["schedules"]);
-
-  for (const ds of deletedScheds) {
-    await deleteRecordFromFirestoreDirect("schedules", ds);
-  }
 
   res.json({ success: true });
 });
@@ -1513,7 +1438,6 @@ app.post("/api/payroll/loan", async (req, res) => {
 
   db.loans.push(newLoan);
   await saveDb(db, ["loans"]);
-  await saveRecordToFirestoreDirect("loans", newLoan);
   res.status(210).json(newLoan);
 });
 
@@ -1574,7 +1498,6 @@ app.post("/api/payroll/generate", async (req, res) => {
   for (const loan of db.loans) {
     if (loan.Empleado.toLowerCase() === Empleado.toLowerCase() && loan.Estado === "Pendiente") {
       loan.Estado = "Descontado";
-      await saveRecordToFirestoreDirect("loans", loan);
     }
   }
 
@@ -1593,7 +1516,6 @@ app.post("/api/payroll/generate", async (req, res) => {
 
   db.payroll.push(newPayroll);
   await saveDb(db, ["payroll", "loans"]);
-  await saveRecordToFirestoreDirect("payroll", newPayroll);
   res.status(210).json(newPayroll);
 });
 
@@ -1603,7 +1525,6 @@ app.post("/api/payroll/pay", async (req, res) => {
   if (idx !== -1) {
     db.payroll[idx].Estado_Pago = "Pagado";
     await saveDb(db, ["payroll"]);
-    await saveRecordToFirestoreDirect("payroll", db.payroll[idx]);
     return res.json(db.payroll[idx]);
   }
   res.status(404).json({ error: "Registro de nómina no encontrado" });
@@ -1620,7 +1541,6 @@ app.delete("/api/products/:code", async (req, res) => {
   }
   const deleted = db.products.splice(index, 1)[0];
   await saveDb(db, ["products"]);
-  await deleteRecordFromFirestoreDirect("products", deleted);
   res.json({ success: true, deleted });
 });
 
@@ -1802,11 +1722,9 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
 
     await saveDb(db);
 
-    await clearFirestoreOperationalCollections();
-
     recordSyncLog(
       db,
-      "Firebase",
+      "Sistema",
       "Limpieza General de Datos Operativos",
       "success",
       "Base de datos totalmente limpiada para entrega: pedidos, cierres, gastos, mermas, horarios, préstamos y nóminas eliminados.",
@@ -1827,11 +1745,11 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
 
 app.post("/api/admin/clear-past-months-history", async (req, res) => {
   try {
-    const result = await purgePastMonthsOrdersAndClosures(db);
+    const result = purgePastMonthsOrdersAndClosures(db);
     await saveDb(db, ["orders", "closures"]);
     recordSyncLog(
       db,
-      "Firebase",
+      "Sistema",
       "Limpieza de Históricos",
       "success",
       `Limpieza de históricos completada: se eliminaron registros de meses anteriores en pedidos y cierres (${result.deletedOrdersCount} pedidos, ${result.deletedClosuresCount} cierres).`,
@@ -2029,7 +1947,7 @@ app.post("/api/test/run", async (req, res) => {
 
 
 // ─────────────────────────────────────────────
-// SYNC LOGS & FIREBASE ENDPOINTS
+// SYNC LOGS ENDPOINTS
 // ─────────────────────────────────────────────
 app.get("/api/sync-logs", (req, res) => {
   res.json(db.syncLogs || []);
@@ -2039,58 +1957,6 @@ app.post("/api/sync-logs/clear", async (req, res) => {
   db.syncLogs = [];
   await saveDb(db, ["syncLogs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
-});
-
-app.post("/api/firebase/sync", async (req, res) => {
-  const startTime = Date.now();
-  try {
-    const { syncAllLocalCollectionsToFirestore } = await import("./server/firebase.ts");
-    console.log("[API Firebase Sync] Respaldo forzado hacia Firestore solicitado...");
-
-    // Solo empuja el estado actual (Postgres) hacia Firestore como respaldo de solo lectura.
-    // Nunca se lee de vuelta desde Firestore: Postgres es la única fuente de la verdad, y
-    // Firestore puede tener datos desactualizados de antes de la migración que corromperían
-    // el estado real si se volvieran a cargar.
-    const syncedCount = await syncAllLocalCollectionsToFirestore(db);
-
-    const durationMs = Date.now() - startTime;
-    const count = (db.orders?.length || 0) + (db.closures?.length || 0) + (db.products?.length || 0);
-    recordSyncLog(
-      db, 
-      "Firebase", 
-      "Sincronización Manual / ForceSync", 
-      "success", 
-      `Sincronización forzada completada con éxito (${syncedCount} escrituras forzadas en Firestore).`, 
-      count, 
-      durationMs
-    );
-    await saveDb(db, ["syncLogs"]);
-    res.json({
-      success: true,
-      synced: syncedCount,
-      message: "Base de datos sincronizada exitosamente con Firebase Firestore.",
-      counts: {
-        products: db.products?.length || 0,
-        orders: db.orders?.length || 0,
-        closures: db.closures?.length || 0,
-        users: db.users?.length || 0
-      },
-      logs: db.syncLogs
-    });
-  } catch (err: any) {
-    console.error("[API Firebase Sync] Error:", err);
-    recordSyncLog(
-      db, 
-      "Firebase", 
-      "Sincronización Manual", 
-      "error", 
-      `Error en sincronización forzada con Firestore: ${err.message || err}`, 
-      0, 
-      Date.now() - startTime
-    );
-    await saveDb(db, ["syncLogs"]);
-    res.status(500).json({ error: err.message || "Error al sincronizar con Firebase" });
-  }
 });
 
 // ─────────────────────────────────────────────

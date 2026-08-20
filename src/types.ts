@@ -146,7 +146,7 @@ export interface PriceHistory {
 export interface SyncLog {
   id: string;
   timestamp: string;
-  service: "Firebase";
+  service: "Sistema";
   action: string;
   status: "success" | "error" | "warning";
   details: string;

@@ -158,7 +158,7 @@ export interface NequiExpense {
 export interface SyncLog {
   id: string;
   timestamp: string;
-  service: "Firebase";
+  service: "Sistema";
   action: string;
   status: "success" | "error" | "warning";
   details: string;
@@ -191,9 +191,32 @@ export interface DatabaseSchema {
   branchConfigs?: { [branch: string]: BranchConfig };
 }
 
+// Elimina únicamente los pedidos y cierres de caja pertenecientes a meses pasados del año actual
+export function purgePastMonthsOrdersAndClosures(localDb: DatabaseSchema): { deletedOrdersCount: number; deletedClosuresCount: number } {
+  const colombiaNow = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  const currentMonthStart = colombiaNow.slice(0, 7) + "-01"; // Ej: "2026-08-01"
+
+  let deletedOrdersCount = 0;
+  let deletedClosuresCount = 0;
+
+  if (Array.isArray(localDb.orders)) {
+    const initialOrders = localDb.orders.length;
+    localDb.orders = localDb.orders.filter(o => !o.Fecha || o.Fecha >= currentMonthStart);
+    deletedOrdersCount = initialOrders - localDb.orders.length;
+  }
+
+  if (Array.isArray(localDb.closures)) {
+    const initialClosures = localDb.closures.length;
+    localDb.closures = localDb.closures.filter(c => !c.Fecha || c.Fecha >= currentMonthStart);
+    deletedClosuresCount = initialClosures - localDb.closures.length;
+  }
+
+  return { deletedOrdersCount, deletedClosuresCount };
+}
+
 export function recordSyncLog(
   localDb: DatabaseSchema,
-  service: "Firebase",
+  service: "Sistema",
   action: string,
   status: "success" | "error" | "warning",
   details: string,
@@ -869,7 +892,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
     })),
     syncLogs: syncLogsRows.map((l): SyncLog => ({
       id: String(l.id), timestamp: (l.timestamp instanceof Date ? l.timestamp : new Date(l.timestamp as any)).toISOString(),
-      service: "Firebase", action: l.action, status: (l.status as any) || "success", details: l.details || "",
+      service: "Sistema", action: l.action, status: (l.status as any) || "success", details: l.details || "",
       itemsCount: l.itemsCount ?? undefined, durationMs: l.durationMs ?? undefined,
     })),
     branchConfigs: Object.keys(branchConfigsObj).length > 0 ? branchConfigsObj : defaultBranchConfigs(),
