@@ -734,10 +734,18 @@ app.post("/api/closures", async (req, res) => {
 
     const closureDate = Fecha || getColombiaDate();
     const collector = Persona_Recogio && String(Persona_Recogio).trim() ? String(Persona_Recogio).trim() : "Hamilton";
+    const branchTrim = String(Sucursal).trim();
 
+    if (!Array.isArray(db.closures)) db.closures = [];
+    if (!Array.isArray(db.walletTransactions)) db.walletTransactions = [];
+
+    // Cada envío crea un cierre nuevo — una sucursal puede registrar varios cierres el mismo día
+    // (por ejemplo uno por turno) en vez de sobrescribir el anterior.
+    const idCierre = `CLS-${branchTrim.toUpperCase().replace(/[^A-Z0-9]/g, "")}-${closureDate}-${Date.now()}`;
     const newClosure: DailyClosure = {
+      ID_Cierre: idCierre,
       Fecha: closureDate,
-      Sucursal: String(Sucursal).trim(),
+      Sucursal: branchTrim,
       Ventas_Totales: parseFloat(Ventas_Totales) || 0,
       Gastos_Extra: parseFloat(Gastos_Extra) || 0,
       Descripcion_Gastos: Descripcion_Gastos || "",
@@ -745,52 +753,24 @@ app.post("/api/closures", async (req, res) => {
       Recaudado_Fisico: false,
       Foto_Factura: Foto_Factura || undefined,
     };
+    db.closures.push(newClosure);
 
-    if (!Array.isArray(db.closures)) db.closures = [];
-    if (!Array.isArray(db.walletTransactions)) db.walletTransactions = [];
-
-    const existingIdx = db.closures.findIndex(
-      (c) => c && c.Fecha === closureDate && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim()
-    );
-
-    let closureToSave: DailyClosure;
-    if (existingIdx !== -1) {
-      db.closures[existingIdx] = {
-        ...db.closures[existingIdx],
-        ...newClosure,
-        Recaudado_Fisico: db.closures[existingIdx].Recaudado_Fisico
-      };
-      closureToSave = db.closures[existingIdx];
-    } else {
-      db.closures.push(newClosure);
-      closureToSave = newClosure;
-    }
-
-    // Add or update an entry in the branch wallet transaction too
-    const neto = closureToSave.Ventas_Totales - closureToSave.Gastos_Extra;
-    const txIdx = db.walletTransactions.findIndex(
-      (t) => t && t.Fecha === closureDate && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && String(t.Descripcion || "").includes("Cierre")
-    );
-
-    if (txIdx !== -1) {
-      db.walletTransactions[txIdx].Valor = neto;
-      db.walletTransactions[txIdx].Responsable = collector;
-    } else {
-      const newTx: WalletTransaction = {
-        Fecha: closureDate,
-        Sucursal: String(Sucursal).trim(),
-        Tipo_Movimiento: "Ingreso",
-        Valor: neto,
-        Descripcion: `Cierre de Caja - Efectivo neto registrado`,
-        Responsable: collector,
-        Estado: "Pendiente",
-      };
-      db.walletTransactions.push(newTx);
-    }
+    // Cada cierre genera su propia transacción de billetera (no se reutiliza ninguna existente)
+    const neto = newClosure.Ventas_Totales - newClosure.Gastos_Extra;
+    const newTx: WalletTransaction = {
+      Fecha: closureDate,
+      Sucursal: branchTrim,
+      Tipo_Movimiento: "Ingreso",
+      Valor: neto,
+      Descripcion: `Cierre de Caja - Efectivo neto registrado (${idCierre})`,
+      Responsable: collector,
+      Estado: "Pendiente",
+    };
+    db.walletTransactions.push(newTx);
 
     await saveDb(db, ["closures", "walletTransactions"]);
 
-    res.status(200).json(closureToSave);
+    res.status(200).json(newClosure);
   } catch (err: any) {
     console.error("Error al registrar cierre:", err);
     res.status(500).json({ error: "Error al guardar el cierre: " + (err?.message || String(err)) });
@@ -799,17 +779,19 @@ app.post("/api/closures", async (req, res) => {
 
 app.put("/api/closures", async (req, res) => {
   try {
-    const { Fecha, Sucursal, Ventas_Totales, Gastos_Extra, Descripcion_Gastos, Persona_Recogio } = req.body;
-    if (!Fecha || !Sucursal) {
-      return res.status(400).json({ error: "Fecha y sucursal requeridas" });
+    const { ID_Cierre, Fecha, Sucursal, Ventas_Totales, Gastos_Extra, Descripcion_Gastos, Persona_Recogio } = req.body;
+    if (!ID_Cierre && (!Fecha || !Sucursal)) {
+      return res.status(400).json({ error: "ID_Cierre (o Fecha y sucursal) requeridos" });
     }
 
     if (!Array.isArray(db.closures)) db.closures = [];
     if (!Array.isArray(db.walletTransactions)) db.walletTransactions = [];
 
-    const index = db.closures.findIndex(
-      (c) => c && c.Fecha === Fecha && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim()
-    );
+    // Se identifica por ID_Cierre (una sucursal puede tener varios cierres el mismo día).
+    // Se mantiene el respaldo por Fecha+Sucursal solo por compatibilidad con cierres muy antiguos.
+    const index = ID_Cierre
+      ? db.closures.findIndex((c) => c && c.ID_Cierre === ID_Cierre)
+      : db.closures.findIndex((c) => c && c.Fecha === Fecha && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim());
     if (index === -1) {
       return res.status(404).json({ error: "Cierre no encontrado" });
     }
@@ -823,10 +805,10 @@ app.put("/api/closures", async (req, res) => {
 
     const updatedClosure = db.closures[index];
 
-    // Update corresponding wallet transaction
+    // Update corresponding wallet transaction (vinculada por el mismo ID_Cierre en su descripción)
     const neto = updatedClosure.Ventas_Totales - updatedClosure.Gastos_Extra;
     const txIdx = db.walletTransactions.findIndex(
-      (t) => t && t.Fecha === Fecha && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso"
+      (t) => t && t.Fecha === updatedClosure.Fecha && String(t.Sucursal || "").toLowerCase().trim() === String(updatedClosure.Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
     );
     if (txIdx !== -1) {
       db.walletTransactions[txIdx].Valor = neto;
@@ -846,11 +828,15 @@ app.put("/api/closures", async (req, res) => {
 
 app.put("/api/closures/reconcile", async (req, res) => {
   try {
-    const { Fecha, Sucursal, Recaudado_Fisico } = req.body;
+    const { ID_Cierre, Fecha, Sucursal, Recaudado_Fisico } = req.body;
     if (!Array.isArray(db.closures)) db.closures = [];
     if (!Array.isArray(db.walletTransactions)) db.walletTransactions = [];
 
-    const index = db.closures.findIndex((c) => c && c.Fecha === Fecha && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim());
+    // Se identifica por ID_Cierre (una sucursal puede tener varios cierres el mismo día).
+    // Se mantiene el respaldo por Fecha+Sucursal solo por compatibilidad con cierres muy antiguos.
+    const index = ID_Cierre
+      ? db.closures.findIndex((c) => c && c.ID_Cierre === ID_Cierre)
+      : db.closures.findIndex((c) => c && c.Fecha === Fecha && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim());
     if (index === -1) {
       return res.status(404).json({ error: "Cierre no encontrado" });
     }
@@ -858,7 +844,7 @@ app.put("/api/closures/reconcile", async (req, res) => {
     const isConfirmed = !!Recaudado_Fisico;
     db.closures[index].Recaudado_Fisico = isConfirmed;
     const netVal = db.closures[index].Ventas_Totales - db.closures[index].Gastos_Extra;
-    
+
     if (isConfirmed) {
       db.closures[index].Monto_Recaudado = netVal;
     } else {
@@ -867,9 +853,9 @@ app.put("/api/closures/reconcile", async (req, res) => {
 
     const updatedClosure = db.closures[index];
 
-    // Reconcile corresponding wallet transaction for this branch
+    // Reconcile corresponding wallet transaction (vinculada por el mismo ID_Cierre en su descripción)
     const txIdx = db.walletTransactions.findIndex(
-      (t) => t && t.Fecha === Fecha && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso"
+      (t) => t && t.Fecha === updatedClosure.Fecha && String(t.Sucursal || "").toLowerCase().trim() === String(updatedClosure.Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
     );
     if (txIdx !== -1) {
       db.walletTransactions[txIdx].Estado = isConfirmed ? "Reconciliado" : "Pendiente";
@@ -879,7 +865,7 @@ app.put("/api/closures/reconcile", async (req, res) => {
     if (isConfirmed && netVal > 0) {
       const today = getColombiaDate();
       const centralTxIdx = db.walletTransactions.findIndex(
-        (t) => t && t.Fecha === Fecha && String(t.Sucursal || "") === "Central / Nequi" && String(t.Descripcion || "").includes(Sucursal)
+        (t) => t && String(t.Sucursal || "") === "Central / Nequi" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
       );
       if (centralTxIdx === -1) {
         const centralTx: WalletTransaction = {
@@ -887,7 +873,7 @@ app.put("/api/closures/reconcile", async (req, res) => {
           Sucursal: "Central / Nequi",
           Tipo_Movimiento: "Ingreso",
           Valor: netVal,
-          Descripcion: `Recolección Física Autorizada - ${Sucursal} (${Fecha})`,
+          Descripcion: `Recolección Física Autorizada - ${updatedClosure.Sucursal} (${updatedClosure.Fecha}) [${updatedClosure.ID_Cierre}]`,
           Responsable: "Admin / Comprador",
           Estado: "Reconciliado"
         };
@@ -1840,6 +1826,7 @@ app.post("/api/test/run", async (req, res) => {
       const yesterdaySales = 1350000 + (Math.floor(Math.random() * 300) * 1000);
       const yesterdayExpenses = 35000 + (Math.floor(Math.random() * 20) * 1000);
       const yesterdayClosure: DailyClosure = {
+        ID_Cierre: `CLS-${branch.toUpperCase().replace(/[^A-Z0-9]/g, "")}-${yesterdayDate}-${Date.now()}`,
         Fecha: yesterdayDate,
         Sucursal: branch,
         Ventas_Totales: yesterdaySales,
@@ -1866,6 +1853,7 @@ app.post("/api/test/run", async (req, res) => {
       const todaySales = 1580000 + (Math.floor(Math.random() * 400) * 1000);
       const todayExpenses = 20000 + (Math.floor(Math.random() * 15) * 1000);
       const todayClosure: DailyClosure = {
+        ID_Cierre: `CLS-${branch.toUpperCase().replace(/[^A-Z0-9]/g, "")}-${currentDate}-${Date.now()}`,
         Fecha: currentDate,
         Sucursal: branch,
         Ventas_Totales: todaySales,

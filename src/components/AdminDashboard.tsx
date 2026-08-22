@@ -3165,6 +3165,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ID_Cierre: editingClosure.ID_Cierre,
           Fecha: editingClosure.Fecha,
           Sucursal: editingClosure.Sucursal,
           Ventas_Totales: parseFloat(editClosureVentas.replace(/\D/g, "")) || 0,

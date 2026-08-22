@@ -52,6 +52,7 @@ export interface Order {
 }
 
 export interface DailyClosure {
+  ID_Cierre: string;
   Fecha: string;
   Sucursal: string;
   Ventas_Totales: number;
@@ -859,7 +860,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       Proveedor: o.proveedor || "", Celular: o.celular || "",
     })),
     closures: closuresRows.map((c): DailyClosure => ({
-      Fecha: c.fecha, Sucursal: c.sucursal, Ventas_Totales: c.ventasTotales ?? 0, Gastos_Extra: c.gastosExtra ?? 0,
+      ID_Cierre: c.idCierre, Fecha: c.fecha, Sucursal: c.sucursal, Ventas_Totales: c.ventasTotales ?? 0, Gastos_Extra: c.gastosExtra ?? 0,
       Descripcion_Gastos: c.descripcionGastos || "", Persona_Recogio: c.personaRecogio || "", Recaudado_Fisico: !!c.recaudadoFisico,
       Foto_Factura: c.fotoFactura || "", Monto_Recaudado: c.montoRecaudado ?? 0,
     })),
@@ -981,7 +982,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
     await tx.delete(schema.closures);
     if (db.closures.length > 0) {
       await tx.insert(schema.closures).values(db.closures.map((c) => ({
-        fecha: c.Fecha, sucursal: c.Sucursal, ventasTotales: c.Ventas_Totales, gastosExtra: c.Gastos_Extra,
+        idCierre: c.ID_Cierre, fecha: c.Fecha, sucursal: c.Sucursal, ventasTotales: c.Ventas_Totales, gastosExtra: c.Gastos_Extra,
         descripcionGastos: c.Descripcion_Gastos, personaRecogio: c.Persona_Recogio, recaudadoFisico: c.Recaudado_Fisico,
         fotoFactura: c.Foto_Factura || "", montoRecaudado: c.Monto_Recaudado || 0,
       })));

@@ -49,6 +49,7 @@ export interface Order {
 }
 
 export interface DailyClosure {
+  ID_Cierre: string;
   Fecha: string;
   Sucursal: string;
   Ventas_Totales: number;

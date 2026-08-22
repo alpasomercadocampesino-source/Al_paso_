@@ -1146,6 +1146,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ID_Cierre: c.ID_Cierre,
           Fecha: c.Fecha,
           Sucursal: c.Sucursal,
           Recaudado_Fisico: true
@@ -1193,6 +1194,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ID_Cierre: closure.ID_Cierre,
           Fecha: closure.Fecha,
           Sucursal: closure.Sucursal,
           Recaudado_Fisico: true

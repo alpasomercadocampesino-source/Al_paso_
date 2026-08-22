@@ -71,6 +71,7 @@ export const orders = pgTable("orders", {
 // Tabla de Cierres Diarios
 export const closures = pgTable("closures", {
   id: serial("id").primaryKey(),
+  idCierre: text("id_cierre").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
   ventasTotales: doublePrecision("ventas_totales").default(0),
