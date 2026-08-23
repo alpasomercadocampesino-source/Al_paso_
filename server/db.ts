@@ -676,7 +676,7 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
   localDb.providers = deduplicateArray(localDb.providers || [], p => p?.Proveedor ? p.Proveedor.toLowerCase().trim() : null);
   localDb.rates = deduplicateArray(localDb.rates || [], r => r?.Empleado ? r.Empleado.toLowerCase().trim() : null);
   localDb.schedules = deduplicateArray(localDb.schedules || [], s => s?.Fecha && s?.Empleado ? `${s.Fecha}-${s.Empleado.toLowerCase().trim()}` : null);
-  localDb.closures = deduplicateArray(localDb.closures || [], c => c?.Fecha && c?.Sucursal ? `${c.Fecha}-${c.Sucursal.toLowerCase().trim()}` : null);
+  localDb.closures = deduplicateArray(localDb.closures || [], c => c?.ID_Cierre ? `id:${c.ID_Cierre}` : (c?.Fecha && c?.Sucursal ? `${c.Fecha}-${c.Sucursal.toLowerCase().trim()}` : null));
   localDb.priceHistory = deduplicateArray(localDb.priceHistory || [], h => h?.Codigo && h?.Fecha_Hora ? `${h.Codigo.toUpperCase().trim()}-${h.Fecha_Hora}-${h.Costo_Nuevo || h.Costo_Anterior || 0}` : null);
   localDb.nequiExpenses = deduplicateArray(localDb.nequiExpenses || [], e => e?.Fecha && e?.Sucursal ? `${e.Fecha}-${e.Sucursal.toLowerCase().trim()}-${e.Valor_Gasto || (e as any).Monto || 0}-${(e.Descripcion_Gasto || '').toLowerCase().trim()}` : null);
 
