@@ -65,6 +65,7 @@ export interface DailyClosure {
 }
 
 export interface WalletTransaction {
+  ID_Transaccion: string;
   Fecha: string;
   Sucursal: string;
   Tipo_Movimiento: "Ingreso" | "Gasto";
@@ -148,6 +149,7 @@ export interface PriceHistory {
 }
 
 export interface NequiExpense {
+  ID_Gasto: string;
   Fecha: string;
   Sucursal: string;
   Valor_Gasto: number;
@@ -678,7 +680,7 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
   localDb.schedules = deduplicateArray(localDb.schedules || [], s => s?.Fecha && s?.Empleado ? `${s.Fecha}-${s.Empleado.toLowerCase().trim()}` : null);
   localDb.closures = deduplicateArray(localDb.closures || [], c => c?.ID_Cierre ? `id:${c.ID_Cierre}` : (c?.Fecha && c?.Sucursal ? `${c.Fecha}-${c.Sucursal.toLowerCase().trim()}` : null));
   localDb.priceHistory = deduplicateArray(localDb.priceHistory || [], h => h?.Codigo && h?.Fecha_Hora ? `${h.Codigo.toUpperCase().trim()}-${h.Fecha_Hora}-${h.Costo_Nuevo || h.Costo_Anterior || 0}` : null);
-  localDb.nequiExpenses = deduplicateArray(localDb.nequiExpenses || [], e => e?.Fecha && e?.Sucursal ? `${e.Fecha}-${e.Sucursal.toLowerCase().trim()}-${e.Valor_Gasto || (e as any).Monto || 0}-${(e.Descripcion_Gasto || '').toLowerCase().trim()}` : null);
+  localDb.nequiExpenses = deduplicateArray(localDb.nequiExpenses || [], e => e?.ID_Gasto ? `id:${e.ID_Gasto}` : (e?.Fecha && e?.Sucursal ? `${e.Fecha}-${e.Sucursal.toLowerCase().trim()}-${e.Valor_Gasto || (e as any).Monto || 0}-${(e.Descripcion_Gasto || '').toLowerCase().trim()}` : null));
 
   localDb.orders = deduplicateArray(localDb.orders || [], o => {
     if (!o) return null;
@@ -694,6 +696,7 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
 
   localDb.walletTransactions = deduplicateArray(localDb.walletTransactions || [], w => {
     if (!w) return null;
+    if (w.ID_Transaccion) return `id:${w.ID_Transaccion}`;
     const date = w.Fecha || "";
     const branch = (w.Sucursal || "").toLowerCase().trim();
     const type = (w.Tipo_Movimiento || (w as any).Tipo || "").toLowerCase().trim();
@@ -865,7 +868,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       Foto_Factura: c.fotoFactura || "", Monto_Recaudado: c.montoRecaudado ?? 0,
     })),
     walletTransactions: walletRows.map((w): WalletTransaction => ({
-      Fecha: w.fecha, Sucursal: w.sucursal, Tipo_Movimiento: (w.tipoMovimiento as any) || "Gasto", Valor: w.valor ?? 0,
+      ID_Transaccion: w.idTransaccion || "", Fecha: w.fecha, Sucursal: w.sucursal, Tipo_Movimiento: (w.tipoMovimiento as any) || "Gasto", Valor: w.valor ?? 0,
       Descripcion: w.descripcion || "", Responsable: w.responsable || "", Estado: (w.estado as any) || "Pendiente", Foto_Factura: w.fotoFactura || "",
     })),
     shrinkages: shrinkagesRows.map((s): Shrinkage => ({
@@ -888,7 +891,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       Venta_Anterior: h.ventaAnterior ?? 0, Venta_Nueva: h.ventaNueva ?? 0, Usuario: h.usuario || "",
     })),
     nequiExpenses: nequiRows.map((n): NequiExpense => ({
-      Fecha: n.fecha, Sucursal: n.sucursal, Valor_Gasto: n.valorGasto ?? 0, Descripcion_Gasto: n.descripcionGasto || "",
+      ID_Gasto: n.idGasto || "", Fecha: n.fecha, Sucursal: n.sucursal, Valor_Gasto: n.valorGasto ?? 0, Descripcion_Gasto: n.descripcionGasto || "",
       Responsable: n.responsable || "", Reconciliado_Fisico: !!n.reconciliadoFisico,
     })),
     syncLogs: syncLogsRows.map((l): SyncLog => ({
@@ -992,7 +995,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
     await tx.delete(schema.walletTransactions);
     if (db.walletTransactions.length > 0) {
       await tx.insert(schema.walletTransactions).values(db.walletTransactions.map((w) => ({
-        fecha: w.Fecha, sucursal: w.Sucursal, tipoMovimiento: w.Tipo_Movimiento, valor: w.Valor, descripcion: w.Descripcion,
+        idTransaccion: w.ID_Transaccion, fecha: w.Fecha, sucursal: w.Sucursal, tipoMovimiento: w.Tipo_Movimiento, valor: w.Valor, descripcion: w.Descripcion,
         responsable: w.Responsable, estado: w.Estado, fotoFactura: w.Foto_Factura || "",
       })));
     }
@@ -1058,7 +1061,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
     await tx.delete(schema.nequiExpenses);
     if (db.nequiExpenses.length > 0) {
       await tx.insert(schema.nequiExpenses).values(db.nequiExpenses.map((n) => ({
-        fecha: n.Fecha, sucursal: n.Sucursal, valorGasto: n.Valor_Gasto, descripcionGasto: n.Descripcion_Gasto,
+        idGasto: n.ID_Gasto, fecha: n.Fecha, sucursal: n.Sucursal, valorGasto: n.Valor_Gasto, descripcionGasto: n.Descripcion_Gasto,
         responsable: n.Responsable, reconciliadoFisico: n.Reconciliado_Fisico,
       })));
     }

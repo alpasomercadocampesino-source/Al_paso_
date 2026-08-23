@@ -90,6 +90,7 @@ export const closures = pgTable("closures", {
 // Tabla de Transacciones de Billetera
 export const walletTransactions = pgTable("wallet_transactions", {
   id: serial("id").primaryKey(),
+  idTransaccion: text("id_transaccion").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
   tipoMovimiento: text("tipo_movimiento").notNull(),
@@ -212,6 +213,7 @@ export const priceHistories = pgTable("price_histories", {
 // Tabla de Gastos Nequi (reconciliación de caja)
 export const nequiExpenses = pgTable("nequi_expenses", {
   id: serial("id").primaryKey(),
+  idGasto: text("id_gasto").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
   valorGasto: doublePrecision("valor_gasto").default(0),

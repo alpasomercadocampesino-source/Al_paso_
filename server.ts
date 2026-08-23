@@ -24,6 +24,11 @@ function getColombiaYesterdayDate(): string {
   return d.toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 }
 
+function genRecordId(prefix: string, branch: string, date: string): string {
+  const branchTag = String(branch || "").toUpperCase().replace(/[^A-Z0-9]/g, "") || "GEN";
+  return `${prefix}-${branchTag}-${date}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 // Supabase/PostgreSQL es la fuente de la verdad. Se asigna en startServer(),
 // antes de que el servidor empiece a aceptar peticiones (ver abajo).
 let db: DatabaseSchema;
@@ -758,6 +763,7 @@ app.post("/api/closures", async (req, res) => {
     // Cada cierre genera su propia transacción de billetera (no se reutiliza ninguna existente)
     const neto = newClosure.Ventas_Totales - newClosure.Gastos_Extra;
     const newTx: WalletTransaction = {
+      ID_Transaccion: genRecordId("TXN", branchTrim, closureDate),
       Fecha: closureDate,
       Sucursal: branchTrim,
       Tipo_Movimiento: "Ingreso",
@@ -869,6 +875,7 @@ app.put("/api/closures/reconcile", async (req, res) => {
       );
       if (centralTxIdx === -1) {
         const centralTx: WalletTransaction = {
+          ID_Transaccion: genRecordId("TXN", "CENTRAL", today),
           Fecha: today,
           Sucursal: "Central / Nequi",
           Tipo_Movimiento: "Ingreso",
@@ -965,12 +972,13 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
     // Add a transaction representing this cash pickup to the Central Bank Ledger / general Nequi
     const today = getColombiaDate();
     const newTx: WalletTransaction = {
+      ID_Transaccion: genRecordId("TXN", "CENTRAL", today),
       Fecha: today,
       Sucursal: "Central / Nequi",
       Tipo_Movimiento: "Ingreso",
       Valor: customCollected,
-      Descripcion: isPartial 
-        ? `Recolección Física Parcial Autorizada - ${Sucursal}` 
+      Descripcion: isPartial
+        ? `Recolección Física Parcial Autorizada - ${Sucursal}`
         : `Recolección Física Autorizada - ${Sucursal}`,
       Responsable: "Admin (Cris)",
       Estado: "Reconciliado"
@@ -1111,6 +1119,7 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
   const txDate = Fecha || getColombiaDate();
 
   const newTx: WalletTransaction = {
+    ID_Transaccion: genRecordId("TXN", branch, txDate),
     Fecha: txDate,
     Sucursal: branch,
     Tipo_Movimiento: "Gasto",
@@ -1124,6 +1133,7 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
   db.walletTransactions.push(newTx);
 
   const newExpense = {
+    ID_Gasto: genRecordId("GST", branch, txDate),
     Fecha: txDate,
     Sucursal: branch,
     Valor_Gasto: parseFloat(Valor_Gasto),
@@ -1150,6 +1160,7 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
   const txDate = Fecha || getColombiaDate();
 
   const newTx: WalletTransaction = {
+    ID_Transaccion: genRecordId("TXN", branch, txDate),
     Fecha: txDate,
     Sucursal: branch,
     Tipo_Movimiento: Tipo_Movimiento as "Ingreso" | "Gasto",
@@ -1839,6 +1850,7 @@ app.post("/api/test/run", async (req, res) => {
 
       const yesterdayNeto = yesterdaySales - yesterdayExpenses;
       const yesterdayTx: WalletTransaction = {
+        ID_Transaccion: genRecordId("TXN", branch, yesterdayDate),
         Fecha: yesterdayDate,
         Sucursal: branch,
         Tipo_Movimiento: "Ingreso",
@@ -1866,6 +1878,7 @@ app.post("/api/test/run", async (req, res) => {
 
       const todayNeto = todaySales - todayExpenses;
       const todayTx: WalletTransaction = {
+        ID_Transaccion: genRecordId("TXN", branch, currentDate),
         Fecha: currentDate,
         Sucursal: branch,
         Tipo_Movimiento: "Ingreso",
