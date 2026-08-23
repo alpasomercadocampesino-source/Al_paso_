@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 
 const app = express();
@@ -339,7 +339,7 @@ app.delete("/api/providers/:name", async (req, res) => {
   }
 
   const deleted = db.providers.splice(idx, 1)[0];
-  await saveDb(db, ["providers"]);
+  await deleteRowByClientId("providers", (deleted as any)._id);
   res.json({ success: true, deleted });
 });
 
@@ -1357,8 +1357,8 @@ app.delete("/api/payroll/rates/:name", async (req, res) => {
   if (index === -1) {
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
-  db.rates.splice(index, 1);
-  await saveDb(db, ["rates"]);
+  const deleted = db.rates.splice(index, 1)[0];
+  await deleteRowByClientId("employee_rates", (deleted as any)._id);
   res.json({ success: true });
 });
 
@@ -1537,7 +1537,7 @@ app.delete("/api/products/:code", async (req, res) => {
     return res.status(404).json({ error: "Producto no encontrado en el catálogo." });
   }
   const deleted = db.products.splice(index, 1)[0];
-  await saveDb(db, ["products"]);
+  await deleteRowByClientId("products", (deleted as any)._id);
   res.json({ success: true, deleted });
 });
 
@@ -1717,7 +1717,7 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
     db.nequiExpenses = [];
     if (db.syncLogs) db.syncLogs = [];
 
-    await saveDb(db);
+    await truncateTables(["orders", "closures", "wallet_transactions", "shrinkages", "packaging_movements", "employee_schedules", "employee_loans", "payroll_records", "price_histories", "nequi_expenses", "sync_logs"]);
 
     recordSyncLog(
       db,
@@ -1742,7 +1742,7 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
 
 app.post("/api/admin/clear-past-months-history", async (req, res) => {
   try {
-    const result = purgePastMonthsOrdersAndClosures(db);
+    const result = await purgePastMonthsOrdersAndClosures(db);
     await saveDb(db, ["orders", "closures"]);
     recordSyncLog(
       db,
@@ -1773,6 +1773,7 @@ app.post("/api/test/run", async (req, res) => {
     db.closures = [];
     db.walletTransactions = [];
     db.priceHistory = [];
+    await truncateTables(["orders", "closures", "wallet_transactions", "price_histories"]);
 
     const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
     const productsToUse = db.products.slice(0, 15);
@@ -1956,7 +1957,7 @@ app.get("/api/sync-logs", (req, res) => {
 
 app.post("/api/sync-logs/clear", async (req, res) => {
   db.syncLogs = [];
-  await saveDb(db, ["syncLogs"]);
+  await truncateTables(["sync_logs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
 });
 

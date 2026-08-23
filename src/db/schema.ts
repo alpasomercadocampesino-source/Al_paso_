@@ -4,15 +4,18 @@ import { relations } from "drizzle-orm";
 // Tabla de usuarios (autenticación propia usuario/contraseña con hash bcrypt)
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   usuario: text("usuario").notNull().unique(),
   contrasena: text("contrasena").notNull(), // hash bcrypt
   rol: text("rol").default("Sucursal"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
 
 // Tabla de Productos
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   codigo: text("codigo").notNull().unique(),
   producto: text("producto").notNull(),
   medida: text("medida").default("Kg"),
@@ -27,6 +30,7 @@ export const products = pgTable("products", {
   factorBulto: doublePrecision("factor_bulto").default(1),
   factorCanastilla: doublePrecision("factor_canastilla").default(1),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("products_proveedor_idx").on(table.proveedor),
 ]).enableRLS();
@@ -34,14 +38,17 @@ export const products = pgTable("products", {
 // Tabla de Proveedores
 export const providers = pgTable("providers", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   proveedor: text("proveedor").notNull().unique(),
   celular: text("celular").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
 
 // Tabla de Pedidos / Órdenes
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   idPedido: text("id_pedido").notNull(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -61,6 +68,7 @@ export const orders = pgTable("orders", {
   proveedor: text("proveedor").default(""),
   celular: text("celular").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("orders_codigo_idx").on(table.codigo),
   index("orders_proveedor_idx").on(table.proveedor),
@@ -71,6 +79,7 @@ export const orders = pgTable("orders", {
 // Tabla de Cierres Diarios
 export const closures = pgTable("closures", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   idCierre: text("id_cierre").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -82,6 +91,7 @@ export const closures = pgTable("closures", {
   fotoFactura: text("foto_factura").default(""),
   montoRecaudado: doublePrecision("monto_recaudado").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("closures_fecha_idx").on(table.fecha),
   index("closures_sucursal_idx").on(table.sucursal),
@@ -90,6 +100,7 @@ export const closures = pgTable("closures", {
 // Tabla de Transacciones de Billetera
 export const walletTransactions = pgTable("wallet_transactions", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   idTransaccion: text("id_transaccion").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -100,6 +111,7 @@ export const walletTransactions = pgTable("wallet_transactions", {
   estado: text("estado").default("Pendiente"),
   fotoFactura: text("foto_factura").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("wallet_transactions_fecha_idx").on(table.fecha),
   index("wallet_transactions_sucursal_idx").on(table.sucursal),
@@ -108,6 +120,7 @@ export const walletTransactions = pgTable("wallet_transactions", {
 // Tabla de Mermas
 export const shrinkages = pgTable("shrinkages", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
   codigo: text("codigo").notNull(),
@@ -119,6 +132,7 @@ export const shrinkages = pgTable("shrinkages", {
   perdidaMonetaria: doublePrecision("perdida_monetaria").default(0),
   foto: text("foto").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("shrinkages_codigo_idx").on(table.codigo),
 ]).enableRLS();
@@ -126,6 +140,7 @@ export const shrinkages = pgTable("shrinkages", {
 // Tabla de Empaques / Movimientos
 export const packagingMovements = pgTable("packaging_movements", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   idMovimiento: text("id_movimiento").notNull(),
   fecha: text("fecha").notNull(),
   proveedor: text("proveedor").notNull(),
@@ -134,6 +149,7 @@ export const packagingMovements = pgTable("packaging_movements", {
   cantidadDevuelta: integer("cantidad_devuelta").default(0),
   notas: text("notas").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("packaging_movements_proveedor_idx").on(table.proveedor),
 ]).enableRLS();
@@ -141,11 +157,13 @@ export const packagingMovements = pgTable("packaging_movements", {
 // Tabla de Horarios de Empleados
 export const employeeSchedules = pgTable("employee_schedules", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   fecha: text("fecha").notNull(),
   empleado: text("empleado").notNull(),
   sucursal: text("sucursal").notNull(),
   horasTrabajadas: doublePrecision("horas_trabajadas").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("employee_schedules_empleado_idx").on(table.empleado),
 ]).enableRLS();
@@ -153,6 +171,7 @@ export const employeeSchedules = pgTable("employee_schedules", {
 // Tabla de Préstamos
 export const employeeLoans = pgTable("employee_loans", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   fecha: text("fecha").notNull(),
   empleado: text("empleado").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -160,6 +179,7 @@ export const employeeLoans = pgTable("employee_loans", {
   motivo: text("motivo").default(""),
   estado: text("estado").default("Pendiente"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("employee_loans_empleado_idx").on(table.empleado),
 ]).enableRLS();
@@ -167,6 +187,7 @@ export const employeeLoans = pgTable("employee_loans", {
 // Tabla de Tarifas / Tasas de Empleados
 export const employeeRates = pgTable("employee_rates", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   empleado: text("empleado").notNull().unique(),
   valorDia: doublePrecision("valor_dia").default(0),
   valorHora: doublePrecision("valor_hora").default(0),
@@ -174,11 +195,13 @@ export const employeeRates = pgTable("employee_rates", {
   celular: text("celular").default(""),
   cedula: text("cedula").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
 
 // Tabla de Registros de Nómina
 export const payrollRecords = pgTable("payroll_records", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   fecha: text("fecha").notNull(),
   trabajador: text("trabajador").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -190,6 +213,7 @@ export const payrollRecords = pgTable("payroll_records", {
   totalNeto: doublePrecision("total_neto").default(0),
   estadoPago: text("estado_pago").default("Pendiente"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("payroll_records_trabajador_idx").on(table.trabajador),
 ]).enableRLS();
@@ -197,6 +221,7 @@ export const payrollRecords = pgTable("payroll_records", {
 // Tabla de Historial de Precios
 export const priceHistories = pgTable("price_histories", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   fechaHora: text("fecha_hora").notNull(),
   codigo: text("codigo").notNull(),
   producto: text("producto").notNull(),
@@ -206,6 +231,7 @@ export const priceHistories = pgTable("price_histories", {
   ventaNueva: doublePrecision("venta_nueva").default(0),
   usuario: text("usuario").default(""),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("price_histories_codigo_idx").on(table.codigo),
 ]).enableRLS();
@@ -213,6 +239,7 @@ export const priceHistories = pgTable("price_histories", {
 // Tabla de Gastos Nequi (reconciliación de caja)
 export const nequiExpenses = pgTable("nequi_expenses", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   idGasto: text("id_gasto").notNull().unique(),
   fecha: text("fecha").notNull(),
   sucursal: text("sucursal").notNull(),
@@ -221,11 +248,13 @@ export const nequiExpenses = pgTable("nequi_expenses", {
   responsable: text("responsable").default(""),
   reconciliadoFisico: boolean("reconciliado_fisico").default(false),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
 
 // Tabla de Logs de Sincronización
 export const syncLogs = pgTable("sync_logs", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   timestamp: timestamp("timestamp").defaultNow(),
   service: text("service").notNull(),
   action: text("action").notNull(),
@@ -238,11 +267,13 @@ export const syncLogs = pgTable("sync_logs", {
 // Tabla de Configuración por Sucursal
 export const branchConfigs = pgTable("branch_configs", {
   id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull().unique(),
   sucursal: text("sucursal").notNull().unique(),
   baseCaja: doublePrecision("base_caja").default(0),
   recolectorPredeterminado: text("recolector_predeterminado").default(""),
   montoAlerta: doublePrecision("monto_alerta").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
 
 // Relaciones entre entidades

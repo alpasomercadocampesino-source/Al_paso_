@@ -1,7 +1,45 @@
 import fs from "fs";
 import path from "path";
+import { sql } from "drizzle-orm";
 import { db as pgDb } from "../src/db/index.ts";
 import * as schema from "../src/db/schema.ts";
+
+// Upsert por fila (INSERT ... ON CONFLICT DO UPDATE), nunca DELETE+INSERT masivo.
+// Evita que un proceso con una foto vieja en memoria borre filas que otro proceso
+// (o esta misma app tras un reinicio) ya insertó — el bug de condición de carrera
+// que perdimos un cierre de prueba por él.
+async function upsertRows(tx: any, tableName: string, conflictCol: string, rows: Record<string, any>[]) {
+  if (rows.length === 0) return;
+  const columns = Object.keys(rows[0]);
+  const updateCols = columns.filter((c) => c !== conflictCol);
+  const colIdents = sql.join(columns.map((c) => sql.identifier(c)), sql.raw(", "));
+  const updateSet = sql.join(updateCols.map((c) => sql`${sql.identifier(c)} = excluded.${sql.identifier(c)}`), sql.raw(", "));
+
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    const valueRows = sql.join(
+      batch.map((row) => sql`(${sql.join(columns.map((c) => sql`${row[c] ?? null}`), sql.raw(", "))})`),
+      sql.raw(", ")
+    );
+    await tx.execute(sql`INSERT INTO ${sql.identifier(tableName)} (${colIdents}) VALUES ${valueRows} ON CONFLICT (${sql.identifier(conflictCol)}) DO UPDATE SET ${updateSet}`);
+  }
+}
+
+// Ya que el sync ahora es upsert-por-fila (nunca DELETE+INSERT masivo), un borrado
+// explícito (ej. eliminar un producto) tiene que decírselo a Postgres directamente.
+export async function deleteRowByClientId(tableName: string, clientId: string | undefined | null): Promise<void> {
+  if (!clientId) return;
+  await pgDb.execute(sql`DELETE FROM ${sql.identifier(tableName)} WHERE client_id = ${clientId}`);
+}
+
+// Vaciado explícito de una o más tablas completas (ej. "limpiar datos operativos" del admin).
+// El sync normal ya no borra nada por sí solo, así que un vaciado intencional debe pedirse aquí.
+export async function truncateTables(tableNames: string[]): Promise<void> {
+  for (const t of tableNames) {
+    await pgDb.execute(sql`DELETE FROM ${sql.identifier(t)}`);
+  }
+}
 
 export interface User {
   Usuario: string;
@@ -195,23 +233,29 @@ export interface DatabaseSchema {
 }
 
 // Elimina únicamente los pedidos y cierres de caja pertenecientes a meses pasados del año actual
-export function purgePastMonthsOrdersAndClosures(localDb: DatabaseSchema): { deletedOrdersCount: number; deletedClosuresCount: number } {
+export async function purgePastMonthsOrdersAndClosures(localDb: DatabaseSchema): Promise<{ deletedOrdersCount: number; deletedClosuresCount: number }> {
   const colombiaNow = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const currentMonthStart = colombiaNow.slice(0, 7) + "-01"; // Ej: "2026-08-01"
 
   let deletedOrdersCount = 0;
   let deletedClosuresCount = 0;
 
+  // El sync ahora es upsert-por-fila (nunca DELETE+INSERT masivo), así que estas filas
+  // hay que borrarlas explícitamente de Postgres — quitarlas del array en memoria no basta.
   if (Array.isArray(localDb.orders)) {
     const initialOrders = localDb.orders.length;
+    const toRemove = localDb.orders.filter(o => o.Fecha && o.Fecha < currentMonthStart);
     localDb.orders = localDb.orders.filter(o => !o.Fecha || o.Fecha >= currentMonthStart);
     deletedOrdersCount = initialOrders - localDb.orders.length;
+    await Promise.all(toRemove.map(o => deleteRowByClientId("orders", (o as any)._id)));
   }
 
   if (Array.isArray(localDb.closures)) {
     const initialClosures = localDb.closures.length;
+    const toRemove = localDb.closures.filter(c => c.Fecha && c.Fecha < currentMonthStart);
     localDb.closures = localDb.closures.filter(c => !c.Fecha || c.Fecha >= currentMonthStart);
     deletedClosuresCount = initialClosures - localDb.closures.length;
+    await Promise.all(toRemove.map(c => deleteRowByClientId("closures", (c as any)._id)));
   }
 
   return { deletedOrdersCount, deletedClosuresCount };
@@ -741,15 +785,15 @@ export function ensureRecordIds(localDb: DatabaseSchema): void {
               case "providers": raw = `prv_${item.Proveedor || ''}`; break;
               case "rates": raw = `rat_${item.Empleado || ''}`; break;
               case "orders": raw = `ord_${item.Fecha || ''}_${item.Sucursal || ''}_${item.Codigo || ''}_${item.ID_Pedido || ''}_${i}`; break;
-              case "closures": raw = `cls_${item.Fecha || ''}_${item.Sucursal || ''}`; break;
-              case "walletTransactions": raw = `wtx_${item.Fecha || ''}_${item.Sucursal || ''}_${item.Tipo_Movimiento || ''}_${item.Responsable || ''}_${i}`; break;
+              case "closures": raw = item.ID_Cierre || `cls_${item.Fecha || ''}_${item.Sucursal || ''}`; break;
+              case "walletTransactions": raw = item.ID_Transaccion || `wtx_${item.Fecha || ''}_${item.Sucursal || ''}_${item.Tipo_Movimiento || ''}_${item.Responsable || ''}_${i}`; break;
               case "shrinkages": raw = `shk_${item.Fecha || ''}_${item.Sucursal || ''}_${item.Codigo || ''}_${i}`; break;
               case "packagingMovements": raw = `pkg_${item.ID_Movimiento || `${item.Fecha || ''}_${item.Proveedor || ''}_${i}`}`; break;
               case "schedules": raw = `sch_${item.Fecha || ''}_${item.Empleado || ''}_${i}`; break;
               case "loans": raw = `lon_${item.Fecha || ''}_${item.Empleado || ''}_${i}`; break;
               case "payroll": raw = `pay_${item.Fecha || ''}_${item.Trabajador || ''}_${i}`; break;
               case "priceHistory": raw = `prc_${item.Fecha_Hora || ''}_${item.Codigo || ''}_${i}`; break;
-              case "nequiExpenses": raw = `neq_${item.Fecha || ''}_${item.Sucursal || ''}_${i}`; break;
+              case "nequiExpenses": raw = item.ID_Gasto || `neq_${item.Fecha || ''}_${item.Sucursal || ''}_${i}`; break;
               default: raw = `rec_${colKey}_${i}`; break;
             }
             item._id = raw.toLowerCase().trim().replace(/[\/\s#?]/g, "_").replace(/^[\.\s]+/, "").replace(/[\.\s]+$/, "") || `rec_${i}`;
@@ -813,6 +857,13 @@ function defaultBranchConfigs(): { [branch: string]: BranchConfig } {
   };
 }
 
+// Conserva el client_id ya asignado en Postgres como _id en memoria, para que
+// ensureRecordIds() no genere uno nuevo y el próximo upsert siga apuntando a la misma fila.
+function tagId<T>(obj: T, id: string | null | undefined): T {
+  (obj as any)._id = id || undefined;
+  return obj;
+}
+
 async function loadFromPostgres(): Promise<DatabaseSchema> {
   const [
     usersRows, productsRows, providersRows, ordersRows, closuresRows,
@@ -847,53 +898,53 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
   }
 
   return {
-    users: usersRows.map((u): User => ({ Usuario: u.usuario, Contraseña: u.contrasena, Rol: (u.rol as any) || "Sucursal" })),
-    products: productsRows.map((p): Product => ({
+    users: usersRows.map((u) => tagId({ Usuario: u.usuario, Contraseña: u.contrasena, Rol: (u.rol as any) || "Sucursal" } as User, u.clientId)),
+    products: productsRows.map((p) => tagId({
       Codigo: p.codigo, Producto: p.producto, Medida: p.medida || "Kg", Merma: p.merma ?? 0, Utilidad: p.utilidad ?? 0,
       Proveedor: p.proveedor || "", Celular: p.celular || "", Costo_Proveedor: p.costoProveedor ?? 0,
       Precio_Venta_Actual: p.precioVentaActual ?? 0, Precio_Anterior: p.precioAnterior ?? 0, Venta_Anterior: p.ventaAnterior ?? 0,
       Factor_Bulto: p.factorBulto ?? 1, Factor_Canastilla: p.factorCanastilla ?? 1,
-    })),
-    providers: providersRows.map((p): Provider => ({ Proveedor: p.proveedor, Celular: p.celular || "" })),
-    orders: ordersRows.map((o): Order => ({
+    } as Product, p.clientId)),
+    providers: providersRows.map((p) => tagId({ Proveedor: p.proveedor, Celular: p.celular || "" } as Provider, p.clientId)),
+    orders: ordersRows.map((o) => tagId({
       ID_Pedido: o.idPedido, Fecha: o.fecha, Sucursal: o.sucursal, Codigo: o.codigo, Producto: o.producto, Medida: o.medida || "Kg",
       Cantidad: o.cantidad || "0", Notas: o.notas || "", Precio_Anterior: o.precioAnterior ?? 0, Porcentaje_Ganancia: o.porcentajeGanancia ?? 0,
       Cantidad_Comprada: o.cantidadComprada ?? 0, Costo_Momento: o.costoMomento ?? 0, Precio_Venta_Momento: o.precioVentaMomento ?? 0,
       Kilos: o.kilos ?? 0, Estado: (o.estado as any) || "Pendiente", Estado_Pago: (o.estadoPago as any) || "Pendiente",
       Proveedor: o.proveedor || "", Celular: o.celular || "",
-    })),
-    closures: closuresRows.map((c): DailyClosure => ({
+    } as Order, o.clientId)),
+    closures: closuresRows.map((c) => tagId({
       ID_Cierre: c.idCierre, Fecha: c.fecha, Sucursal: c.sucursal, Ventas_Totales: c.ventasTotales ?? 0, Gastos_Extra: c.gastosExtra ?? 0,
       Descripcion_Gastos: c.descripcionGastos || "", Persona_Recogio: c.personaRecogio || "", Recaudado_Fisico: !!c.recaudadoFisico,
       Foto_Factura: c.fotoFactura || "", Monto_Recaudado: c.montoRecaudado ?? 0,
-    })),
-    walletTransactions: walletRows.map((w): WalletTransaction => ({
+    } as DailyClosure, c.clientId)),
+    walletTransactions: walletRows.map((w) => tagId({
       ID_Transaccion: w.idTransaccion || "", Fecha: w.fecha, Sucursal: w.sucursal, Tipo_Movimiento: (w.tipoMovimiento as any) || "Gasto", Valor: w.valor ?? 0,
       Descripcion: w.descripcion || "", Responsable: w.responsable || "", Estado: (w.estado as any) || "Pendiente", Foto_Factura: w.fotoFactura || "",
-    })),
-    shrinkages: shrinkagesRows.map((s): Shrinkage => ({
+    } as WalletTransaction, w.clientId)),
+    shrinkages: shrinkagesRows.map((s) => tagId({
       Fecha: s.fecha, Sucursal: s.sucursal, Codigo: s.codigo, Producto: s.producto, Cantidad: s.cantidad || "0", Unidad: s.unidad || "Kg",
       Motivo: s.motivo || "", Costo_Proveedor: s.costoProveedor ?? 0, Perdida_Monetaria: s.perdidaMonetaria ?? 0, Foto: s.foto || "",
-    })),
-    packagingMovements: packagingRows.map((m): PackagingMovement => ({
+    } as Shrinkage, s.clientId)),
+    packagingMovements: packagingRows.map((m) => tagId({
       ID_Movimiento: m.idMovimiento, Fecha: m.fecha, Proveedor: m.proveedor, Tipo_Activo: (m.tipoActivo as any) || "Canastilla",
       Cantidad_Entregada: m.cantidadEntregada ?? 0, Cantidad_Devuelta: m.cantidadDevuelta ?? 0, Notas: m.notas || "",
-    })),
-    schedules: schedulesRows.map((s): EmployeeSchedule => ({ Fecha: s.fecha, Empleado: s.empleado, Sucursal: s.sucursal, Horas_Trabajadas: s.horasTrabajadas ?? 0 })),
-    loans: loansRows.map((l): EmployeeLoan => ({ Fecha: l.fecha, Empleado: l.empleado, Sucursal: l.sucursal, Monto: l.monto ?? 0, Motivo: l.motivo || "", Estado: (l.estado as any) || "Pendiente" })),
-    rates: ratesRows.map((r): EmployeeRate => ({ Empleado: r.empleado, Valor_Dia: r.valorDia ?? 0, Valor_Hora: r.valorHora ?? 0, Auxilio_Transporte: r.auxilioTransporte ?? 0, Celular: r.celular || "", Cedula: r.cedula || "" })),
-    payroll: payrollRows.map((p): PayrollRecord => ({
+    } as PackagingMovement, m.clientId)),
+    schedules: schedulesRows.map((s) => tagId({ Fecha: s.fecha, Empleado: s.empleado, Sucursal: s.sucursal, Horas_Trabajadas: s.horasTrabajadas ?? 0 } as EmployeeSchedule, s.clientId)),
+    loans: loansRows.map((l) => tagId({ Fecha: l.fecha, Empleado: l.empleado, Sucursal: l.sucursal, Monto: l.monto ?? 0, Motivo: l.motivo || "", Estado: (l.estado as any) || "Pendiente" } as EmployeeLoan, l.clientId)),
+    rates: ratesRows.map((r) => tagId({ Empleado: r.empleado, Valor_Dia: r.valorDia ?? 0, Valor_Hora: r.valorHora ?? 0, Auxilio_Transporte: r.auxilioTransporte ?? 0, Celular: r.celular || "", Cedula: r.cedula || "" } as EmployeeRate, r.clientId)),
+    payroll: payrollRows.map((p) => tagId({
       Fecha: p.fecha, Trabajador: p.trabajador, Sucursal: p.sucursal, Dias_Trabajados: p.diasTrabajados ?? 0, Horas_Trabajadas: p.horasTrabajadas ?? 0,
       Pago_Base: p.pagoBase ?? 0, Pago_Horas: p.pagoHoras ?? 0, Prestamos_Descontados: p.prestamosDescontados ?? 0, Total_Neto: p.totalNeto ?? 0, Estado_Pago: (p.estadoPago as any) || "Pendiente",
-    })),
-    priceHistory: priceHistoryRows.map((h): PriceHistory => ({
+    } as PayrollRecord, p.clientId)),
+    priceHistory: priceHistoryRows.map((h) => tagId({
       Fecha_Hora: h.fechaHora, Codigo: h.codigo, Producto: h.producto, Costo_Anterior: h.costoAnterior ?? 0, Costo_Nuevo: h.costoNuevo ?? 0,
       Venta_Anterior: h.ventaAnterior ?? 0, Venta_Nueva: h.ventaNueva ?? 0, Usuario: h.usuario || "",
-    })),
-    nequiExpenses: nequiRows.map((n): NequiExpense => ({
+    } as PriceHistory, h.clientId)),
+    nequiExpenses: nequiRows.map((n) => tagId({
       ID_Gasto: n.idGasto || "", Fecha: n.fecha, Sucursal: n.sucursal, Valor_Gasto: n.valorGasto ?? 0, Descripcion_Gasto: n.descripcionGasto || "",
       Responsable: n.responsable || "", Reconciliado_Fisico: !!n.reconciliadoFisico,
-    })),
+    } as NequiExpense, n.clientId)),
     syncLogs: syncLogsRows.map((l): SyncLog => ({
       id: String(l.id), timestamp: (l.timestamp instanceof Date ? l.timestamp : new Date(l.timestamp as any)).toISOString(),
       service: "Sistema", action: l.action, status: (l.status as any) || "success", details: l.details || "",
@@ -949,141 +1000,101 @@ export type CollectionKey = keyof DatabaseSchema;
 // Cada colección sabe reemplazar su propia tabla (delete + insert) dentro de una transacción.
 const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Promise<void>> = {
   users: async (db, tx) => {
-    await tx.delete(schema.users);
-    if (db.users.length > 0) {
-      await tx.insert(schema.users).values(db.users.map((u) => ({ usuario: u.Usuario, contrasena: u.Contraseña || "", rol: u.Rol })));
-    }
+    await upsertRows(tx, "users", "client_id", db.users.map((u) => ({
+      client_id: (u as any)._id, usuario: u.Usuario, contrasena: u.Contraseña || "", rol: u.Rol,
+    })));
   },
   products: async (db, tx) => {
-    await tx.delete(schema.products);
-    if (db.products.length > 0) {
-      await tx.insert(schema.products).values(db.products.map((p) => ({
-        codigo: p.Codigo, producto: p.Producto, medida: p.Medida, merma: p.Merma, utilidad: p.Utilidad, proveedor: p.Proveedor,
-        celular: p.Celular, costoProveedor: p.Costo_Proveedor, precioVentaActual: p.Precio_Venta_Actual, precioAnterior: p.Precio_Anterior,
-        ventaAnterior: p.Venta_Anterior, factorBulto: p.Factor_Bulto, factorCanastilla: p.Factor_Canastilla,
-      })));
-    }
+    await upsertRows(tx, "products", "client_id", db.products.map((p) => ({
+      client_id: (p as any)._id, codigo: p.Codigo, producto: p.Producto, medida: p.Medida, merma: p.Merma, utilidad: p.Utilidad, proveedor: p.Proveedor,
+      celular: p.Celular, costo_proveedor: p.Costo_Proveedor, precio_venta_actual: p.Precio_Venta_Actual, precio_anterior: p.Precio_Anterior,
+      venta_anterior: p.Venta_Anterior, factor_bulto: p.Factor_Bulto, factor_canastilla: p.Factor_Canastilla,
+    })));
   },
   providers: async (db, tx) => {
-    await tx.delete(schema.providers);
-    if (db.providers.length > 0) {
-      await tx.insert(schema.providers).values(db.providers.map((p) => ({ proveedor: p.Proveedor, celular: p.Celular })));
-    }
+    await upsertRows(tx, "providers", "client_id", db.providers.map((p) => ({
+      client_id: (p as any)._id, proveedor: p.Proveedor, celular: p.Celular,
+    })));
   },
   orders: async (db, tx) => {
-    await tx.delete(schema.orders);
-    if (db.orders.length > 0) {
-      await tx.insert(schema.orders).values(db.orders.map((o) => ({
-        idPedido: o.ID_Pedido, fecha: o.Fecha, sucursal: o.Sucursal, codigo: o.Codigo, producto: o.Producto, medida: o.Medida,
-        cantidad: o.Cantidad, notas: o.Notas, precioAnterior: o.Precio_Anterior, porcentajeGanancia: o.Porcentaje_Ganancia,
-        cantidadComprada: o.Cantidad_Comprada, costoMomento: o.Costo_Momento, precioVentaMomento: o.Precio_Venta_Momento,
-        kilos: o.Kilos, estado: o.Estado, estadoPago: o.Estado_Pago, proveedor: o.Proveedor, celular: o.Celular,
-      })));
-    }
+    await upsertRows(tx, "orders", "client_id", db.orders.map((o) => ({
+      client_id: (o as any)._id, id_pedido: o.ID_Pedido, fecha: o.Fecha, sucursal: o.Sucursal, codigo: o.Codigo, producto: o.Producto, medida: o.Medida,
+      cantidad: o.Cantidad, notas: o.Notas, precio_anterior: o.Precio_Anterior, porcentaje_ganancia: o.Porcentaje_Ganancia,
+      cantidad_comprada: o.Cantidad_Comprada, costo_momento: o.Costo_Momento, precio_venta_momento: o.Precio_Venta_Momento,
+      kilos: o.Kilos, estado: o.Estado, estado_pago: o.Estado_Pago, proveedor: o.Proveedor, celular: o.Celular,
+    })));
   },
   closures: async (db, tx) => {
-    await tx.delete(schema.closures);
-    if (db.closures.length > 0) {
-      await tx.insert(schema.closures).values(db.closures.map((c) => ({
-        idCierre: c.ID_Cierre, fecha: c.Fecha, sucursal: c.Sucursal, ventasTotales: c.Ventas_Totales, gastosExtra: c.Gastos_Extra,
-        descripcionGastos: c.Descripcion_Gastos, personaRecogio: c.Persona_Recogio, recaudadoFisico: c.Recaudado_Fisico,
-        fotoFactura: c.Foto_Factura || "", montoRecaudado: c.Monto_Recaudado || 0,
-      })));
-    }
+    await upsertRows(tx, "closures", "client_id", db.closures.map((c) => ({
+      client_id: (c as any)._id, id_cierre: c.ID_Cierre, fecha: c.Fecha, sucursal: c.Sucursal, ventas_totales: c.Ventas_Totales, gastos_extra: c.Gastos_Extra,
+      descripcion_gastos: c.Descripcion_Gastos, persona_recogio: c.Persona_Recogio, recaudado_fisico: c.Recaudado_Fisico,
+      foto_factura: c.Foto_Factura || "", monto_recaudado: c.Monto_Recaudado || 0,
+    })));
   },
   walletTransactions: async (db, tx) => {
-    await tx.delete(schema.walletTransactions);
-    if (db.walletTransactions.length > 0) {
-      await tx.insert(schema.walletTransactions).values(db.walletTransactions.map((w) => ({
-        idTransaccion: w.ID_Transaccion, fecha: w.Fecha, sucursal: w.Sucursal, tipoMovimiento: w.Tipo_Movimiento, valor: w.Valor, descripcion: w.Descripcion,
-        responsable: w.Responsable, estado: w.Estado, fotoFactura: w.Foto_Factura || "",
-      })));
-    }
+    await upsertRows(tx, "wallet_transactions", "client_id", db.walletTransactions.map((w) => ({
+      client_id: (w as any)._id, id_transaccion: w.ID_Transaccion, fecha: w.Fecha, sucursal: w.Sucursal, tipo_movimiento: w.Tipo_Movimiento, valor: w.Valor, descripcion: w.Descripcion,
+      responsable: w.Responsable, estado: w.Estado, foto_factura: w.Foto_Factura || "",
+    })));
   },
   shrinkages: async (db, tx) => {
-    await tx.delete(schema.shrinkages);
-    if (db.shrinkages.length > 0) {
-      await tx.insert(schema.shrinkages).values(db.shrinkages.map((s) => ({
-        fecha: s.Fecha, sucursal: s.Sucursal, codigo: s.Codigo, producto: s.Producto, cantidad: s.Cantidad, unidad: s.Unidad || "Kg",
-        motivo: s.Motivo, costoProveedor: s.Costo_Proveedor, perdidaMonetaria: s.Perdida_Monetaria, foto: s.Foto || "",
-      })));
-    }
+    await upsertRows(tx, "shrinkages", "client_id", db.shrinkages.map((s) => ({
+      client_id: (s as any)._id, fecha: s.Fecha, sucursal: s.Sucursal, codigo: s.Codigo, producto: s.Producto, cantidad: s.Cantidad, unidad: s.Unidad || "Kg",
+      motivo: s.Motivo, costo_proveedor: s.Costo_Proveedor, perdida_monetaria: s.Perdida_Monetaria, foto: s.Foto || "",
+    })));
   },
   packagingMovements: async (db, tx) => {
-    await tx.delete(schema.packagingMovements);
-    if (db.packagingMovements.length > 0) {
-      await tx.insert(schema.packagingMovements).values(db.packagingMovements.map((m) => ({
-        idMovimiento: m.ID_Movimiento, fecha: m.Fecha, proveedor: m.Proveedor, tipoActivo: m.Tipo_Activo,
-        cantidadEntregada: m.Cantidad_Entregada, cantidadDevuelta: m.Cantidad_Devuelta, notas: m.Notas,
-      })));
-    }
+    await upsertRows(tx, "packaging_movements", "client_id", db.packagingMovements.map((m) => ({
+      client_id: (m as any)._id, id_movimiento: m.ID_Movimiento, fecha: m.Fecha, proveedor: m.Proveedor, tipo_activo: m.Tipo_Activo,
+      cantidad_entregada: m.Cantidad_Entregada, cantidad_devuelta: m.Cantidad_Devuelta, notas: m.Notas,
+    })));
   },
   schedules: async (db, tx) => {
-    await tx.delete(schema.employeeSchedules);
-    if (db.schedules.length > 0) {
-      await tx.insert(schema.employeeSchedules).values(db.schedules.map((s) => ({ fecha: s.Fecha, empleado: s.Empleado, sucursal: s.Sucursal, horasTrabajadas: s.Horas_Trabajadas })));
-    }
+    await upsertRows(tx, "employee_schedules", "client_id", db.schedules.map((s) => ({
+      client_id: (s as any)._id, fecha: s.Fecha, empleado: s.Empleado, sucursal: s.Sucursal, horas_trabajadas: s.Horas_Trabajadas,
+    })));
   },
   loans: async (db, tx) => {
-    await tx.delete(schema.employeeLoans);
-    if (db.loans.length > 0) {
-      await tx.insert(schema.employeeLoans).values(db.loans.map((l) => ({ fecha: l.Fecha, empleado: l.Empleado, sucursal: l.Sucursal, monto: l.Monto, motivo: l.Motivo, estado: l.Estado })));
-    }
+    await upsertRows(tx, "employee_loans", "client_id", db.loans.map((l) => ({
+      client_id: (l as any)._id, fecha: l.Fecha, empleado: l.Empleado, sucursal: l.Sucursal, monto: l.Monto, motivo: l.Motivo, estado: l.Estado,
+    })));
   },
   rates: async (db, tx) => {
-    await tx.delete(schema.employeeRates);
-    if (db.rates.length > 0) {
-      await tx.insert(schema.employeeRates).values(db.rates.map((r) => ({
-        empleado: r.Empleado, valorDia: r.Valor_Dia, valorHora: r.Valor_Hora, auxilioTransporte: r.Auxilio_Transporte || 0,
-        celular: r.Celular || "", cedula: r.Cedula || "",
-      })));
-    }
+    await upsertRows(tx, "employee_rates", "client_id", db.rates.map((r) => ({
+      client_id: (r as any)._id, empleado: r.Empleado, valor_dia: r.Valor_Dia, valor_hora: r.Valor_Hora, auxilio_transporte: r.Auxilio_Transporte || 0,
+      celular: r.Celular || "", cedula: r.Cedula || "",
+    })));
   },
   payroll: async (db, tx) => {
-    await tx.delete(schema.payrollRecords);
-    if (db.payroll.length > 0) {
-      await tx.insert(schema.payrollRecords).values(db.payroll.map((p) => ({
-        fecha: p.Fecha, trabajador: p.Trabajador, sucursal: p.Sucursal, diasTrabajados: p.Dias_Trabajados, horasTrabajadas: p.Horas_Trabajadas,
-        pagoBase: p.Pago_Base, pagoHoras: p.Pago_Horas, prestamosDescontados: p.Prestamos_Descontados, totalNeto: p.Total_Neto, estadoPago: p.Estado_Pago,
-      })));
-    }
+    await upsertRows(tx, "payroll_records", "client_id", db.payroll.map((p) => ({
+      client_id: (p as any)._id, fecha: p.Fecha, trabajador: p.Trabajador, sucursal: p.Sucursal, dias_trabajados: p.Dias_Trabajados, horas_trabajadas: p.Horas_Trabajadas,
+      pago_base: p.Pago_Base, pago_horas: p.Pago_Horas, prestamos_descontados: p.Prestamos_Descontados, total_neto: p.Total_Neto, estado_pago: p.Estado_Pago,
+    })));
   },
   priceHistory: async (db, tx) => {
-    await tx.delete(schema.priceHistories);
-    if (db.priceHistory.length > 0) {
-      await tx.insert(schema.priceHistories).values(db.priceHistory.map((h) => ({
-        fechaHora: h.Fecha_Hora, codigo: h.Codigo, producto: h.Producto, costoAnterior: h.Costo_Anterior, costoNuevo: h.Costo_Nuevo,
-        ventaAnterior: h.Venta_Anterior, ventaNueva: h.Venta_Nueva, usuario: h.Usuario,
-      })));
-    }
+    await upsertRows(tx, "price_histories", "client_id", db.priceHistory.map((h) => ({
+      client_id: (h as any)._id, fecha_hora: h.Fecha_Hora, codigo: h.Codigo, producto: h.Producto, costo_anterior: h.Costo_Anterior, costo_nuevo: h.Costo_Nuevo,
+      venta_anterior: h.Venta_Anterior, venta_nueva: h.Venta_Nueva, usuario: h.Usuario,
+    })));
   },
   nequiExpenses: async (db, tx) => {
-    await tx.delete(schema.nequiExpenses);
-    if (db.nequiExpenses.length > 0) {
-      await tx.insert(schema.nequiExpenses).values(db.nequiExpenses.map((n) => ({
-        idGasto: n.ID_Gasto, fecha: n.Fecha, sucursal: n.Sucursal, valorGasto: n.Valor_Gasto, descripcionGasto: n.Descripcion_Gasto,
-        responsable: n.Responsable, reconciliadoFisico: n.Reconciliado_Fisico,
-      })));
-    }
+    await upsertRows(tx, "nequi_expenses", "client_id", db.nequiExpenses.map((n) => ({
+      client_id: (n as any)._id, id_gasto: n.ID_Gasto, fecha: n.Fecha, sucursal: n.Sucursal, valor_gasto: n.Valor_Gasto, descripcion_gasto: n.Descripcion_Gasto,
+      responsable: n.Responsable, reconciliado_fisico: n.Reconciliado_Fisico,
+    })));
   },
   syncLogs: async (db, tx) => {
-    await tx.delete(schema.syncLogs);
     const logs = db.syncLogs || [];
-    if (logs.length > 0) {
-      await tx.insert(schema.syncLogs).values(logs.map((l) => ({
-        timestamp: new Date(l.timestamp), service: l.service, action: l.action, status: l.status,
-        details: l.details, itemsCount: l.itemsCount || 0, durationMs: l.durationMs || 0,
-      })));
-    }
+    await upsertRows(tx, "sync_logs", "client_id", logs.map((l) => ({
+      client_id: l.id, timestamp: new Date(l.timestamp), service: l.service, action: l.action, status: l.status,
+      details: l.details, items_count: l.itemsCount || 0, duration_ms: l.durationMs || 0,
+    })));
   },
   branchConfigs: async (db, tx) => {
-    await tx.delete(schema.branchConfigs);
     const configs = Object.entries(db.branchConfigs || {});
-    if (configs.length > 0) {
-      await tx.insert(schema.branchConfigs).values(configs.map(([sucursal, cfg]) => ({
-        sucursal, baseCaja: cfg.baseCaja, recolectorPredeterminado: cfg.recolectorPredeterminado, montoAlerta: cfg.montoAlerta,
-      })));
-    }
+    await upsertRows(tx, "branch_configs", "client_id", configs.map(([sucursal, cfg]) => ({
+      client_id: `brc_${sucursal.toLowerCase().trim()}`, sucursal, base_caja: cfg.baseCaja, recolector_predeterminado: cfg.recolectorPredeterminado, monto_alerta: cfg.montoAlerta,
+    })));
   },
 };
 
