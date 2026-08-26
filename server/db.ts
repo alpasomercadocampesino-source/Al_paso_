@@ -33,6 +33,20 @@ export async function deleteRowByClientId(tableName: string, clientId: string | 
   await pgDb.execute(sql`DELETE FROM ${sql.identifier(tableName)} WHERE client_id = ${clientId}`);
 }
 
+// Conteo real de filas en Postgres, para el chequeo de salud.
+export async function getTableCounts(): Promise<Record<string, number>> {
+  const result = await pgDb.execute(sql`
+    SELECT 'products' AS tabla, COUNT(*) AS n FROM products
+    UNION ALL SELECT 'orders', COUNT(*) FROM orders
+    UNION ALL SELECT 'closures', COUNT(*) FROM closures
+    UNION ALL SELECT 'wallet_transactions', COUNT(*) FROM wallet_transactions
+  `);
+  const rows: any[] = (result as any).rows ?? (result as any);
+  const counts: Record<string, number> = {};
+  for (const r of rows) counts[r.tabla] = Number(r.n);
+  return counts;
+}
+
 // Vaciado explícito de una o más tablas completas (ej. "limpiar datos operativos" del admin).
 // El sync normal ya no borra nada por sí solo, así que un vaciado intencional debe pedirse aquí.
 export async function truncateTables(tableNames: string[]): Promise<void> {
@@ -1118,9 +1132,33 @@ export async function saveDb(db: DatabaseSchema, only?: CollectionKey[]): Promis
   }
 
   const targets = only && only.length > 0 ? only : ALL_COLLECTIONS;
-  await pgDb.transaction(async (tx) => {
-    for (const key of targets) {
-      await TABLE_SYNCERS[key](db, tx);
+
+  // Reintento con espera creciente: un corte breve de red hacia Supabase (o un
+  // pool que acaba de reciclar la conexión) no debe costarle un pedido o un
+  // cierre a la sucursal. La transacción hace que cada intento sea todo-o-nada,
+  // y el upsert por client_id hace que reintentar sea seguro (idempotente).
+  const MAX_ATTEMPTS = 4;
+  let lastErr: any;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await pgDb.transaction(async (tx) => {
+        for (const key of targets) {
+          await TABLE_SYNCERS[key](db, tx);
+        }
+      });
+      if (attempt > 1) {
+        console.log(`[Database] Guardado exitoso en el intento ${attempt}.`);
+      }
+      return;
+    } catch (err: any) {
+      lastErr = err;
+      if (attempt === MAX_ATTEMPTS) break;
+      const waitMs = 250 * 2 ** (attempt - 1); // 250ms, 500ms, 1s
+      console.warn(`[Database] Falló el guardado (intento ${attempt}/${MAX_ATTEMPTS}): ${err?.message || err}. Reintentando en ${waitMs}ms...`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
-  });
+  }
+
+  console.error(`[Database] El guardado falló tras ${MAX_ATTEMPTS} intentos:`, lastErr?.message || lastErr);
+  throw lastErr;
 }

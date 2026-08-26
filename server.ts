@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, getTableCounts, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 
 const app = express();
@@ -376,11 +376,18 @@ app.post("/api/orders", async (req, res) => {
   const oid = `PED-${sucursal.toUpperCase()}-${timestamp}`;
 
   const createdOrders: Order[] = [];
+  // Renglones que no se pudieron registrar (p. ej. la sucursal tenía un catálogo
+  // en caché desantiguado y pidió un código que ya no existe). Antes se
+  // descartaban en silencio y la sucursal veía "pedido enviado con éxito".
+  const rejectedItems: { Codigo: string; Cantidad: any; motivo: string }[] = [];
 
   for (const item of items) {
     const { Codigo, Cantidad, Notas } = item;
     const prod = db.products.find((p) => p.Codigo === Codigo);
-    if (!prod) continue;
+    if (!prod) {
+      rejectedItems.push({ Codigo, Cantidad, motivo: "El código no existe en el catálogo actual" });
+      continue;
+    }
 
     // Estimate kilos
     let kilos = 0;
@@ -394,7 +401,7 @@ app.post("/api/orders", async (req, res) => {
       kilos = qtyNum; // standard kilos
     }
 
-    const newOrder: Order = {
+    createdOrders.push({
       ID_Pedido: oid,
       Fecha: orderDate,
       Sucursal: sucursal,
@@ -413,20 +420,35 @@ app.post("/api/orders", async (req, res) => {
       Estado_Pago: "Pendiente",
       Proveedor: prod.Proveedor,
       Celular: prod.Celular,
-    };
-
-    db.orders.push(newOrder);
-    createdOrders.push(newOrder);
-  }
-
-  await saveDb(db, ["orders"]);
-  if (createdOrders.length > 0) {
-    sendOrderSummaryEmail(oid, sucursal, orderDate, createdOrders).catch(err => {
-      console.error("Failed to automatically send order summary email:", err);
     });
   }
 
-  res.status(210).json({ ID_Pedido: oid, orders: createdOrders });
+  if (createdOrders.length === 0) {
+    return res.status(400).json({
+      error: "Ningún producto del pedido pudo registrarse. Actualiza el catálogo e inténtalo de nuevo.",
+      rejectedItems,
+    });
+  }
+
+  // Se agregan a memoria solo justo antes de guardar, y se revierten si el guardado
+  // falla — así la memoria nunca queda con pedidos que Postgres no tiene.
+  db.orders.push(...createdOrders);
+  try {
+    await saveDb(db, ["orders"]);
+  } catch (err: any) {
+    for (const o of createdOrders) {
+      const i = db.orders.indexOf(o);
+      if (i !== -1) db.orders.splice(i, 1);
+    }
+    console.error("Error al guardar el pedido:", err);
+    return res.status(500).json({ error: "No se pudo guardar el pedido: " + (err?.message || String(err)) });
+  }
+
+  sendOrderSummaryEmail(oid, sucursal, orderDate, createdOrders).catch(err => {
+    console.error("Failed to automatically send order summary email:", err);
+  });
+
+  res.status(200).json({ ID_Pedido: oid, orders: createdOrders, rejectedItems });
 });
 
 // Update specific order details
@@ -774,7 +796,17 @@ app.post("/api/closures", async (req, res) => {
     };
     db.walletTransactions.push(newTx);
 
-    await saveDb(db, ["closures", "walletTransactions"]);
+    try {
+      await saveDb(db, ["closures", "walletTransactions"]);
+    } catch (saveErr) {
+      // Se revierte lo agregado en memoria: si no, un reintento de la sucursal
+      // crearía un segundo cierre y el próximo guardado exitoso persistiría ambos.
+      const ci = db.closures.indexOf(newClosure);
+      if (ci !== -1) db.closures.splice(ci, 1);
+      const ti = db.walletTransactions.indexOf(newTx);
+      if (ti !== -1) db.walletTransactions.splice(ti, 1);
+      throw saveErr;
+    }
 
     res.status(200).json(newClosure);
   } catch (err: any) {
@@ -1959,6 +1991,42 @@ app.post("/api/sync-logs/clear", async (req, res) => {
   db.syncLogs = [];
   await truncateTables(["sync_logs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
+});
+
+// Chequeo de salud: confirma que Postgres responde de verdad y que lo que hay en
+// memoria coincide con lo persistido. Sirve para detectar un problema antes de que
+// una sucursal pierda un pedido, en vez de enterarnos por el reclamo.
+app.get("/api/health", async (req, res) => {
+  try {
+    const counts = await getTableCounts();
+    const memoria = {
+      products: db.products.length,
+      orders: db.orders.length,
+      closures: db.closures.length,
+      walletTransactions: db.walletTransactions.length,
+    };
+    const desincronizado =
+      counts.products !== memoria.products ||
+      counts.orders !== memoria.orders ||
+      counts.closures !== memoria.closures ||
+      counts.wallet_transactions !== memoria.walletTransactions;
+
+    res.status(desincronizado ? 409 : 200).json({
+      estado: desincronizado ? "DESINCRONIZADO" : "OK",
+      baseDeDatos: "conectada",
+      postgres: counts,
+      memoria,
+      advertencia: desincronizado
+        ? "La memoria del servidor y la base de datos no coinciden. Suele indicar que otro proceso escribió en la misma base; reinicia el servicio para recargar."
+        : undefined,
+    });
+  } catch (err: any) {
+    res.status(503).json({
+      estado: "ERROR",
+      baseDeDatos: "sin conexión",
+      detalle: err?.message || String(err),
+    });
+  }
 });
 
 // ─────────────────────────────────────────────

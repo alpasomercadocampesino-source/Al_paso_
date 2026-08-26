@@ -340,6 +340,7 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
       setSuccessMsg("Sincronizando pedidos guardados sin conexión...");
 
       let syncedCount = 0;
+      const rejectedMsgs: string[] = [];
       for (const order of branchPending) {
         try {
           const res = await fetch("/api/orders", {
@@ -351,13 +352,26 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
               fecha: order.fecha
             })
           });
+          const data = await res.json().catch(() => ({}));
+
           if (res.ok) {
             if (order.id !== undefined) {
               await removePendingOrder(order.id);
               syncedCount++;
             }
+            const rejected = Array.isArray(data.rejectedItems) ? data.rejectedItems : [];
+            if (rejected.length > 0) {
+              rejectedMsgs.push(`Pedido del ${order.fecha}: no se guardaron ${rejected.map((r: any) => r.Codigo).join(", ")} (ya no están en el catálogo)`);
+            }
+          } else if (res.status >= 400 && res.status < 500) {
+            // El servidor lo rechazó de forma definitiva: reintentar no va a servir.
+            // Se saca de la cola y se le avisa a la sucursal, en vez de reintentar en bucle.
+            if (order.id !== undefined) await removePendingOrder(order.id);
+            rejectedMsgs.push(`Pedido del ${order.fecha} rechazado: ${data.error || `error ${res.status}`}`);
           } else {
-            console.warn("Failed to sync order, server returned error");
+            // 5xx: problema temporal del servidor, se deja en cola para reintentar.
+            console.warn("Error temporal del servidor al sincronizar, se reintentará luego");
+            break;
           }
         } catch (err) {
           console.error("Failed to sync order due to network/server:", err);
@@ -365,6 +379,9 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
         }
       }
 
+      if (rejectedMsgs.length > 0) {
+        setErrorMsg(rejectedMsgs.join(" · "));
+      }
       if (syncedCount > 0) {
         setSuccessMsg(`¡Sincronización exitosa! Se enviaron ${syncedCount} pedido(s) acumulado(s) offline.`);
         fetchTodayOrders();
@@ -524,17 +541,38 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
         })
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (res.ok) {
-        setSuccessMsg("¡Pedido enviado a plaza con éxito!");
+        const rejected = Array.isArray(data.rejectedItems) ? data.rejectedItems : [];
+        if (rejected.length > 0) {
+          // El pedido se guardó, pero algunos renglones no. Antes desaparecían sin aviso.
+          const codigos = rejected.map((r: any) => r.Codigo).join(", ");
+          setErrorMsg(
+            `Se registró el pedido, pero estos productos NO se guardaron porque ya no están en el catálogo: ${codigos}. ` +
+            `Actualiza la lista de productos y vuelve a pedirlos.`
+          );
+          setSuccessMsg("");
+        } else {
+          setSuccessMsg("¡Pedido enviado a plaza con éxito!");
+          setErrorMsg("");
+        }
         setDraft({});
         fetchTodayOrders();
         fetchPreviousOrder();
-      } else {
-        const data = await res.json();
-        throw new Error(data.error || "No se pudo enviar el pedido");
+        setLoading(false);
+        return;
       }
+
+      // El servidor respondió, pero rechazó el pedido: es un error real, NO falta de
+      // conexión. Guardarlo en la cola offline solo lo haría fallar igual más tarde.
+      setErrorMsg(data.error || `El servidor rechazó el pedido (código ${res.status}). El pedido NO se guardó.`);
+      setSuccessMsg("");
+      setLoading(false);
+      return;
     } catch (err: any) {
-      console.warn("Error enviando pedido. Guardando en caché local IndexedDB:", err);
+      // Solo llegamos aquí si fetch falló de verdad (sin red / servidor inalcanzable).
+      console.warn("Sin conexión al enviar el pedido. Guardando en caché local IndexedDB:", err);
       try {
         await queuePendingOrder({
           sucursal: branchName,
