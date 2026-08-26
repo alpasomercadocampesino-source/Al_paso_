@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, getTableCounts, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 
 const app = express();
@@ -1993,6 +1993,40 @@ app.post("/api/sync-logs/clear", async (req, res) => {
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
 });
 
+// ── Respaldos ──────────────────────────────────────────────
+app.get("/api/admin/backups", async (req, res) => {
+  try {
+    res.json(await listBackups());
+  } catch (err: any) {
+    res.status(500).json({ error: "No se pudieron listar los respaldos: " + (err?.message || String(err)) });
+  }
+});
+
+// Crea un respaldo manual bajo demanda (además del automático diario).
+app.post("/api/admin/backups", async (req, res) => {
+  try {
+    const { id, resumen } = await createBackup("manual");
+    res.json({ success: true, id, resumen, message: "Respaldo creado correctamente." });
+  } catch (err: any) {
+    res.status(500).json({ error: "No se pudo crear el respaldo: " + (err?.message || String(err)) });
+  }
+});
+
+// Descarga el respaldo como archivo JSON, para guardarlo fuera de la nube.
+app.get("/api/admin/backups/:id/download", async (req, res) => {
+  try {
+    const backup = await getBackup(Number(req.params.id));
+    if (!backup) return res.status(404).json({ error: "Respaldo no encontrado" });
+
+    const fecha = new Date(backup.creado_en).toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="respaldo-alpaso-${fecha}-${backup.id}.json"`);
+    res.send(JSON.stringify(backup.contenido, null, 2));
+  } catch (err: any) {
+    res.status(500).json({ error: "No se pudo descargar el respaldo: " + (err?.message || String(err)) });
+  }
+});
+
 // Chequeo de salud: confirma que Postgres responde de verdad y que lo que hay en
 // memoria coincide con lo persistido. Sirve para detectar un problema antes de que
 // una sucursal pierda un pedido, en vez de enterarnos por el reclamo.
@@ -2062,6 +2096,9 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Al Paso server running on http://localhost:${PORT}`);
   });
+
+  // 5. Respaldos automáticos diarios (nunca bloquean ni tumban el arranque)
+  startAutomaticBackups();
 }
 
 startServer();

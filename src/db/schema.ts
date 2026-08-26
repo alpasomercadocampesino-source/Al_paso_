@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, doublePrecision, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, doublePrecision, boolean, index, jsonb } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 // Tabla de usuarios (autenticación propia usuario/contraseña con hash bcrypt)
@@ -275,6 +275,18 @@ export const branchConfigs = pgTable("branch_configs", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
+
+// Respaldos automáticos: snapshot completo en JSON de todas las tablas.
+// Declarada aquí para que `drizzle-kit push` no la considere sobrante y la borre.
+export const backups = pgTable("backups", {
+  id: serial("id").primaryKey(),
+  creadoEn: timestamp("creado_en", { withTimezone: true }).notNull().defaultNow(),
+  motivo: text("motivo").notNull().default("automatico"),
+  resumen: jsonb("resumen").notNull(),
+  contenido: jsonb("contenido").notNull(),
+}, (table) => [
+  index("backups_creado_en_idx").on(table.creadoEn),
+]).enableRLS();
 
 // Relaciones entre entidades
 export const usersRelations = relations(users, () => ({}));

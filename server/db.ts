@@ -33,6 +33,91 @@ export async function deleteRowByClientId(tableName: string, clientId: string | 
   await pgDb.execute(sql`DELETE FROM ${sql.identifier(tableName)} WHERE client_id = ${clientId}`);
 }
 
+// ─────────────────────────────────────────────
+// RESPALDOS AUTOMÁTICOS
+// Snapshot completo en JSON de todas las tablas, guardado en la tabla `backups`.
+// Protege contra el riesgo realista (un bug o un borrado accidental deja la base
+// vacía o corrupta) y permite descargar el archivo para guardarlo fuera de línea.
+// ─────────────────────────────────────────────
+
+const BACKUP_TABLES = [
+  "users", "products", "providers", "orders", "closures", "wallet_transactions",
+  "shrinkages", "packaging_movements", "employee_schedules", "employee_loans",
+  "employee_rates", "payroll_records", "price_histories", "nequi_expenses", "branch_configs",
+] as const;
+
+const BACKUPS_TO_KEEP = 30;
+
+export async function createBackup(motivo = "automatico"): Promise<{ id: number; resumen: Record<string, number> }> {
+  const contenido: Record<string, any[]> = {};
+  const resumen: Record<string, number> = {};
+
+  for (const t of BACKUP_TABLES) {
+    const result = await pgDb.execute(sql`SELECT * FROM ${sql.identifier(t)}`);
+    const rows: any[] = (result as any).rows ?? (result as any);
+    contenido[t] = rows;
+    resumen[t] = rows.length;
+  }
+
+  const inserted = await pgDb.execute(
+    sql`INSERT INTO backups (motivo, resumen, contenido) VALUES (${motivo}, ${JSON.stringify(resumen)}::jsonb, ${JSON.stringify(contenido)}::jsonb) RETURNING id`
+  );
+  const insertedRows: any[] = (inserted as any).rows ?? (inserted as any);
+  const id = Number(insertedRows[0].id);
+
+  // Se conservan solo los últimos N para que la tabla no crezca sin límite.
+  await pgDb.execute(
+    sql`DELETE FROM backups WHERE id NOT IN (SELECT id FROM backups ORDER BY creado_en DESC LIMIT ${BACKUPS_TO_KEEP})`
+  );
+
+  console.log(`[Backup] Respaldo #${id} creado (${motivo}):`, JSON.stringify(resumen));
+  return { id, resumen };
+}
+
+export async function listBackups(): Promise<any[]> {
+  const result = await pgDb.execute(sql`SELECT id, creado_en, motivo, resumen FROM backups ORDER BY creado_en DESC`);
+  return (result as any).rows ?? (result as any);
+}
+
+export async function getBackup(id: number): Promise<any | null> {
+  const result = await pgDb.execute(sql`SELECT id, creado_en, motivo, resumen, contenido FROM backups WHERE id = ${id}`);
+  const rows: any[] = (result as any).rows ?? (result as any);
+  return rows[0] || null;
+}
+
+async function hoursSinceLastBackup(): Promise<number> {
+  const result = await pgDb.execute(sql`SELECT EXTRACT(EPOCH FROM (now() - MAX(creado_en))) / 3600 AS horas FROM backups`);
+  const rows: any[] = (result as any).rows ?? (result as any);
+  const horas = rows[0]?.horas;
+  return horas === null || horas === undefined ? Number.POSITIVE_INFINITY : Number(horas);
+}
+
+/**
+ * Arranca el respaldo automático diario. Se ejecuta uno al inicio si ya pasaron
+ * más de 24h desde el último, para que los reinicios no salten un día. Nunca
+ * lanza excepción: un fallo del respaldo no puede tumbar el servidor.
+ */
+export function startAutomaticBackups(): void {
+  const UNA_HORA = 60 * 60 * 1000;
+
+  const intentar = async () => {
+    try {
+      const horas = await hoursSinceLastBackup();
+      if (horas >= 24) {
+        await createBackup("automatico");
+      }
+    } catch (err: any) {
+      console.error("[Backup] Falló el respaldo automático (no crítico):", err?.message || err);
+    }
+  };
+
+  // Primer intento poco después del arranque, luego se revisa cada hora.
+  setTimeout(intentar, 30_000);
+  const timer = setInterval(intentar, UNA_HORA);
+  timer.unref?.();
+  console.log("[Backup] Respaldos automáticos activados (uno cada 24h).");
+}
+
 // Conteo real de filas en Postgres, para el chequeo de salud.
 export async function getTableCounts(): Promise<Record<string, number>> {
   const result = await pgDb.execute(sql`
