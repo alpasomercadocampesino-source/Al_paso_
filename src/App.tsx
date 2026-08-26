@@ -5,10 +5,15 @@ import SucursalDashboard from "./components/SucursalDashboard";
 import CompradorDashboard from "./components/CompradorDashboard";
 import AdminDashboard from "./components/AdminDashboard";
 import { runStorageIntegrityCheck, IntegrityReport } from "./utils/integrityCheck";
+import { installAuthFetch, setAuthToken, clearAuthToken, getAuthToken, EVENTO_SESION_VENCIDA } from "./utils/authClient";
+
+// Se instala antes de que cualquier panel monte y empiece a pedir datos.
+installAuthFetch();
 
 interface SessionUser {
   Usuario: string;
   Rol: "Admin" | "Comprador" | "Sucursal";
+  token?: string;
 }
 
 export default function App() {
@@ -33,18 +38,31 @@ export default function App() {
         setIntegrityAlert("Advertencia: El almacenamiento local del navegador reporta un problema.");
       }
 
-      // Load session
+      // Load session. Solo se restaura si además hay token: sin él, el servidor
+      // rechazaría todo y el usuario vería una pantalla vacía sin explicación.
       const saved = localStorage.getItem("alpaso_session");
-      if (saved) {
+      if (saved && getAuthToken()) {
         try {
           setUser(JSON.parse(saved));
         } catch (e) {
           localStorage.removeItem("alpaso_session");
         }
+      } else if (saved) {
+        localStorage.removeItem("alpaso_session");
       }
     })();
 
     return () => { isMounted = false; };
+  }, []);
+
+  // Si el servidor invalida la sesión (vencida o secreto rotado), se vuelve al login.
+  useEffect(() => {
+    const alCerrarSesion = () => {
+      setUser(null);
+      localStorage.removeItem("alpaso_session");
+    };
+    window.addEventListener(EVENTO_SESION_VENCIDA, alCerrarSesion);
+    return () => window.removeEventListener(EVENTO_SESION_VENCIDA, alCerrarSesion);
   }, []);
 
   const handleRecheckIntegrity = async () => {
@@ -61,12 +79,18 @@ export default function App() {
   };
 
   const handleLoginSuccess = (loggedInUser: SessionUser) => {
-    setUser(loggedInUser);
-    localStorage.setItem("alpaso_session", JSON.stringify(loggedInUser));
+    if (loggedInUser.token) {
+      setAuthToken(loggedInUser.token);
+    }
+    // El token se guarda aparte; la sesión visible no necesita llevarlo.
+    const { token: _token, ...sesionVisible } = loggedInUser;
+    setUser(sesionVisible as SessionUser);
+    localStorage.setItem("alpaso_session", JSON.stringify(sesionVisible));
   };
 
   const handleLogout = () => {
     setUser(null);
+    clearAuthToken();
     localStorage.removeItem("alpaso_session");
   };
 

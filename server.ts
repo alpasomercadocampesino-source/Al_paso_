@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
 import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
+import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -12,6 +13,17 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+// Rutas públicas: iniciar sesión y el chequeo de salud (que no expone datos).
+const RUTAS_PUBLICAS = new Set(["/api/auth/login", "/api/health"]);
+
+// Toda la API exige sesión válida. Antes cualquiera que supiera la dirección web
+// podía leer los usuarios o borrar los datos sin iniciar sesión.
+app.use("/api", (req, res, next) => {
+  const ruta = req.baseUrl + req.path;
+  if (RUTAS_PUBLICAS.has(ruta) || req.method === "OPTIONS") return next();
+  return requireAuth(req, res, next);
+});
 
 // Colombia date utilities (UTC-5, no DST)
 function getColombiaDate(): string {
@@ -101,9 +113,14 @@ app.post("/api/auth/login", async (req, res) => {
       user.Contraseña = bcrypt.hashSync(inputPassword, 10);
       await saveDb(db, ["users"]);
     }
+    const usuario = user.Usuario || (user as any).usuario || (user as any).username || (user as any).Username;
+    const rol = (user.Rol || (user as any).rol || (user as any).role || (user as any).Role) as Rol;
     return res.json({
-      Usuario: user.Usuario || user.usuario || user.username || user.Username,
-      Rol: user.Rol || user.rol || user.role || user.Role,
+      Usuario: usuario,
+      Rol: rol,
+      // El servidor valida este token en cada operación: ya no basta con
+      // saberse la dirección web para entrar o borrar datos.
+      token: crearToken(usuario, rol),
     });
   } else {
     return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
@@ -111,8 +128,9 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // User Management for Admin
-app.get("/api/users", (req, res) => {
-  res.json(db.users);
+app.get("/api/users", requireRole("Admin"), (req, res) => {
+  // Nunca se devuelve el hash de la contraseña, ni siquiera al administrador.
+  res.json(db.users.map((u) => ({ Usuario: u.Usuario, Rol: u.Rol, _id: (u as any)._id })));
 });
 
 // Branch Configs for cash collection
@@ -328,7 +346,7 @@ app.put("/api/providers/:name", async (req, res) => {
   res.json({ success: true, provider: db.providers[idx] });
 });
 
-app.delete("/api/providers/:name", async (req, res) => {
+app.delete("/api/providers/:name", requireRole("Admin"), async (req, res) => {
   const name = decodeURIComponent(req.params.name).trim();
   const idx = db.providers.findIndex(
     (p) => p.Proveedor.toLowerCase().trim() === name.toLowerCase()
@@ -1383,7 +1401,7 @@ app.put("/api/payroll/rates/:name", async (req, res) => {
   res.json(db.rates[index]);
 });
 
-app.delete("/api/payroll/rates/:name", async (req, res) => {
+app.delete("/api/payroll/rates/:name", requireRole("Admin"), async (req, res) => {
   const name = decodeURIComponent(req.params.name).trim();
   const index = db.rates.findIndex(r => r.Empleado.toLowerCase().trim() === name.toLowerCase());
   if (index === -1) {
@@ -1562,7 +1580,7 @@ app.post("/api/payroll/pay", async (req, res) => {
 
 
 
-app.delete("/api/products/:code", async (req, res) => {
+app.delete("/api/products/:code", requireRole("Admin"), async (req, res) => {
   const { code } = req.params;
   const index = db.products.findIndex((p) => p.Codigo === code);
   if (index === -1) {
@@ -1735,7 +1753,7 @@ app.post("/api/admin/import-csv-orders", async (req, res) => {
   res.json({ success: true, count: importedCount, date: orderDate });
 });
 
-app.post("/api/admin/clear-operational-data", async (req, res) => {
+app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, res) => {
   try {
     db.orders = [];
     db.closures = [];
@@ -1772,7 +1790,7 @@ app.post("/api/admin/clear-operational-data", async (req, res) => {
   }
 });
 
-app.post("/api/admin/clear-past-months-history", async (req, res) => {
+app.post("/api/admin/clear-past-months-history", requireRole("Admin"), async (req, res) => {
   try {
     const result = await purgePastMonthsOrdersAndClosures(db);
     await saveDb(db, ["orders", "closures"]);
@@ -1798,7 +1816,7 @@ app.post("/api/admin/clear-past-months-history", async (req, res) => {
 });
 
 
-app.post("/api/test/run", async (req, res) => {
+app.post("/api/test/run", requireRole("Admin"), async (req, res) => {
   try {
     // Reset/Clear relevant tables for a clean test state
     db.orders = [];
@@ -1987,14 +2005,14 @@ app.get("/api/sync-logs", (req, res) => {
   res.json(db.syncLogs || []);
 });
 
-app.post("/api/sync-logs/clear", async (req, res) => {
+app.post("/api/sync-logs/clear", requireRole("Admin"), async (req, res) => {
   db.syncLogs = [];
   await truncateTables(["sync_logs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
 });
 
 // ── Respaldos ──────────────────────────────────────────────
-app.get("/api/admin/backups", async (req, res) => {
+app.get("/api/admin/backups", requireRole("Admin"), async (req, res) => {
   try {
     res.json(await listBackups());
   } catch (err: any) {
@@ -2003,7 +2021,7 @@ app.get("/api/admin/backups", async (req, res) => {
 });
 
 // Crea un respaldo manual bajo demanda (además del automático diario).
-app.post("/api/admin/backups", async (req, res) => {
+app.post("/api/admin/backups", requireRole("Admin"), async (req, res) => {
   try {
     const { id, resumen } = await createBackup("manual");
     res.json({ success: true, id, resumen, message: "Respaldo creado correctamente." });
@@ -2013,7 +2031,7 @@ app.post("/api/admin/backups", async (req, res) => {
 });
 
 // Descarga el respaldo como archivo JSON, para guardarlo fuera de la nube.
-app.get("/api/admin/backups/:id/download", async (req, res) => {
+app.get("/api/admin/backups/:id/download", requireRole("Admin"), async (req, res) => {
   try {
     const backup = await getBackup(Number(req.params.id));
     if (!backup) return res.status(404).json({ error: "Respaldo no encontrado" });

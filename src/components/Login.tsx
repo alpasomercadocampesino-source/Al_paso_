@@ -3,7 +3,7 @@ import { KeyRound, User as UserIcon, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
 
 interface LoginProps {
-  onLoginSuccess: (user: { Usuario: string; Rol: "Admin" | "Comprador" | "Sucursal" }) => void;
+  onLoginSuccess: (user: { Usuario: string; Rol: "Admin" | "Comprador" | "Sucursal"; token?: string }) => void;
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
