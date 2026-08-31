@@ -180,6 +180,8 @@ export default function AdminDashboard({ adminName, lastGlobalSync }: AdminDashb
   // Wallet & Filtration States
   const [walletTxs, setWalletTxs] = useState<WalletTransaction[]>([]);
   const [closuresFilterBranch, setClosuresFilterBranch] = useState<string>("all");
+  // Orden del listado de cierres: por defecto del más reciente al más antiguo.
+  const [ordenCierresAdmin, setOrdenCierresAdmin] = useState<"reciente" | "antiguo">("reciente");
   const [closuresFilterDate, setClosuresFilterDate] = useState<string>("");
   const [closuresFilterStartDate, setClosuresFilterStartDate] = useState<string>("");
   const [closuresFilterEndDate, setClosuresFilterEndDate] = useState<string>("");
@@ -8560,6 +8562,12 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
             const matchStart = !closuresFilterStartDate || c.Fecha >= closuresFilterStartDate;
             const matchEnd = !closuresFilterEndDate || c.Fecha <= closuresFilterEndDate;
             return matchBranch && matchDate && matchStart && matchEnd;
+          }).sort((a, b) => {
+            // Fecha en formato YYYY-MM-DD: comparar como texto ya da orden cronológico.
+            // Si dos cierres son del mismo día, desempata el ID (lleva la hora de registro).
+            const porFecha = (a.Fecha || "").localeCompare(b.Fecha || "");
+            const cmp = porFecha !== 0 ? porFecha : (a.ID_Cierre || "").localeCompare(b.ID_Cierre || "");
+            return ordenCierresAdmin === "reciente" ? -cmp : cmp;
           });
 
           // Export closures Excel (.xlsx)
@@ -8738,7 +8746,18 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-slate-150 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                          <th className="py-3 px-2">Fecha</th>
+                          <th
+                            className="py-3 px-2 cursor-pointer select-none hover:text-slate-600 transition"
+                            title="Clic para ordenar por fecha"
+                            onClick={() => setOrdenCierresAdmin((o) => (o === "reciente" ? "antiguo" : "reciente"))}
+                          >
+                            <span className="inline-flex items-center gap-1">
+                              Fecha
+                              {ordenCierresAdmin === "reciente"
+                                ? <ArrowDown className="w-3 h-3 text-emerald-600" />
+                                : <ArrowUp className="w-3 h-3 text-emerald-600" />}
+                            </span>
+                          </th>
                           <th className="py-3 px-2">Sucursal</th>
                           <th className="py-3 px-2">Persona que va a recoger</th>
                           <th className="py-3 px-2 text-right">Ventas Totales</th>

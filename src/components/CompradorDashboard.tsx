@@ -102,6 +102,8 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   // Closures state
   const [closures, setClosures] = useState<DailyClosure[]>([]);
   const [pendingClosures, setPendingClosures] = useState<DailyClosure[]>([]);
+  // Orden del listado de cierres: por defecto del más reciente al más antiguo.
+  const [ordenCierres, setOrdenCierres] = useState<"reciente" | "antiguo">("reciente");
   const [walletTxs, setWalletTxs] = useState<WalletTransaction[]>([]);
   const [searchLedger, setSearchLedger] = useState("");
 
@@ -2912,8 +2914,23 @@ export default function CompradorDashboard({ username, isAdminView = false, last
 
             {/* 2. Individual Pending Closures List */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-800 mb-2">📋 Detalle de Cierres Individuales</h3>
-              <p className="text-slate-400 text-xs mb-6">Historial detallado de reportes diarios de caja pendientes de conciliación física.</p>
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">📋 Detalle de Cierres Individuales</h3>
+                  <p className="text-slate-400 text-xs mt-1">Historial detallado de reportes diarios de caja pendientes de conciliación física.</p>
+                </div>
+                {pendingClosures.length > 1 && (
+                  <button
+                    onClick={() => setOrdenCierres((o) => (o === "reciente" ? "antiguo" : "reciente"))}
+                    title="Cambiar el orden de la lista por fecha"
+                    className="shrink-0 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-extrabold cursor-pointer transition flex items-center gap-1.5 active:scale-95"
+                  >
+                    <ArrowUpDown className="w-3.5 h-3.5" />
+                    {ordenCierres === "reciente" ? "Más reciente primero" : "Más antiguo primero"}
+                  </button>
+                )}
+              </div>
+              <div className="mb-6" />
 
               {pendingClosures.length === 0 ? (
                 <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col justify-center items-center">
@@ -2923,7 +2940,13 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {pendingClosures.map((c, idx) => {
+                  {[...pendingClosures].sort((a, b) => {
+                    // Fecha en formato YYYY-MM-DD: comparar como texto ya da orden cronológico.
+                    // Si dos cierres son del mismo día, desempata el ID (lleva la hora de registro).
+                    const porFecha = (a.Fecha || "").localeCompare(b.Fecha || "");
+                    const cmp = porFecha !== 0 ? porFecha : (a.ID_Cierre || "").localeCompare(b.ID_Cierre || "");
+                    return ordenCierres === "reciente" ? -cmp : cmp;
+                  }).map((c, idx) => {
                     const neto = c.Ventas_Totales - c.Gastos_Extra;
                     return (
                       <div key={idx} className="p-5 border border-slate-200 rounded-3xl bg-slate-50 hover:bg-slate-100/50 transition flex flex-col justify-between">
