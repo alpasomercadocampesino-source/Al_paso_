@@ -143,7 +143,9 @@ export async function truncateTables(tableNames: string[]): Promise<void> {
 export interface User {
   Usuario: string;
   Contraseña?: string;
-  Rol: "Admin" | "Comprador" | "Sucursal";
+  Rol: "Admin" | "Comprador" | "Sucursal" | "AdminSucursal";
+  /** Solo para AdminSucursal: la única sucursal que administra. */
+  Sucursal?: string;
 }
 
 export interface Product {
@@ -997,7 +999,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
   }
 
   return {
-    users: usersRows.map((u) => tagId({ Usuario: u.usuario, Contraseña: u.contrasena, Rol: (u.rol as any) || "Sucursal" } as User, u.clientId)),
+    users: usersRows.map((u) => tagId({ Usuario: u.usuario, Contraseña: u.contrasena, Rol: (u.rol as any) || "Sucursal", Sucursal: u.sucursal || undefined } as User, u.clientId)),
     products: productsRows.map((p) => tagId({
       Codigo: p.codigo, Producto: p.producto, Medida: p.medida || "Kg", Merma: p.merma ?? 0, Utilidad: p.utilidad ?? 0,
       Proveedor: p.proveedor || "", Celular: p.celular || "", Costo_Proveedor: p.costoProveedor ?? 0,
@@ -1100,7 +1102,7 @@ export type CollectionKey = keyof DatabaseSchema;
 const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Promise<void>> = {
   users: async (db, tx) => {
     await upsertRows(tx, "users", "client_id", db.users.map((u) => ({
-      client_id: (u as any)._id, usuario: u.Usuario, contrasena: u.Contraseña || "", rol: u.Rol,
+      client_id: (u as any)._id, usuario: u.Usuario, contrasena: u.Contraseña || "", rol: u.Rol, sucursal: u.Sucursal || null,
     })));
   },
   products: async (db, tx) => {

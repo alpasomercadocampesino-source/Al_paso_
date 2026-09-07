@@ -8,6 +8,8 @@ export const users = pgTable("users", {
   usuario: text("usuario").notNull().unique(),
   contrasena: text("contrasena").notNull(), // hash bcrypt
   rol: text("rol").default("Sucursal"),
+  // Solo para AdminSucursal: la única sucursal que administra. NULL = alcance global.
+  sucursal: text("sucursal"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();

@@ -1,11 +1,14 @@
 import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
-export type Rol = "Admin" | "Comprador" | "Sucursal";
+// "AdminSucursal": administra una sola sucursal. Tiene las mismas pantallas que
+// Admin, pero solo con los datos de la sucursal que tiene asignada en `s`.
+export type Rol = "Admin" | "Comprador" | "Sucursal" | "AdminSucursal";
 
 export interface SesionToken {
   u: string; // usuario
   r: Rol;    // rol
+  s?: string; // sucursal asignada (solo AdminSucursal); ausente = alcance global
   exp: number; // vencimiento (epoch ms)
 }
 
@@ -37,8 +40,9 @@ function firmar(payloadB64: string): string {
   return crypto.createHmac("sha256", obtenerSecreto()).update(payloadB64).digest("base64url");
 }
 
-export function crearToken(usuario: string, rol: Rol): string {
+export function crearToken(usuario: string, rol: Rol, sucursal?: string | null): string {
   const payload: SesionToken = { u: usuario, r: rol, exp: Date.now() + DURACION_SESION_MS };
+  if (sucursal) payload.s = sucursal;
   const payloadB64 = b64url(JSON.stringify(payload));
   return `${payloadB64}.${firmar(payloadB64)}`;
 }

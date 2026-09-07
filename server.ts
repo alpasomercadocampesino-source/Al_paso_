@@ -14,6 +14,61 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// ─────────────────────────────────────────────
+// ALCANCE POR SUCURSAL
+//
+// Una sucursal puede tener su propio administrador (rol AdminSucursal). Cuando
+// existe, esa sucursal queda aislada: su administrador solo ve lo suyo, y los
+// administradores generales dejan de verla. El comprador es la excepción — sigue
+// viendo todas, porque hace las compras de plaza para el negocio completo.
+//
+// El filtro vive en el servidor a propósito: ocultarlo solo en pantalla dejaría
+// los datos accesibles llamando la API directamente.
+// ─────────────────────────────────────────────
+
+function norm(s: any): string {
+  return String(s || "").toLowerCase().trim();
+}
+
+/** Sucursales que tienen administrador propio y por tanto quedan aisladas. */
+function sucursalesConAdminPropio(): Set<string> {
+  const set = new Set<string>();
+  for (const u of db?.users || []) {
+    if (u && u.Rol === "AdminSucursal" && u.Sucursal) set.add(norm(u.Sucursal));
+  }
+  return set;
+}
+
+/** ¿Esta sesión puede ver los datos de esta sucursal? */
+function puedeVerSucursal(req: express.Request, sucursal: any): boolean {
+  const sesion = req.auth;
+  if (!sesion) return false;
+  const suc = norm(sucursal);
+
+  switch (sesion.r) {
+    case "Comprador":
+      return true; // compra para todas las sucursales
+    case "Sucursal":
+      return suc === norm(sesion.u);
+    case "AdminSucursal":
+      return suc === norm(sesion.s);
+    case "Admin":
+      return !sucursalesConAdminPropio().has(suc);
+    default:
+      return false;
+  }
+}
+
+/** Filtra una lista dejando solo los registros de sucursales visibles para la sesión. */
+function filtrarPorSucursal<T>(req: express.Request, lista: T[], obtenerSucursal: (item: T) => any): T[] {
+  if (!Array.isArray(lista)) return [];
+  const sesion = req.auth;
+  // Admin general sin sucursales aisladas y Comprador ven todo: se evita recorrer.
+  if (sesion?.r === "Comprador") return lista;
+  if (sesion?.r === "Admin" && sucursalesConAdminPropio().size === 0) return lista;
+  return lista.filter((item) => item && puedeVerSucursal(req, obtenerSucursal(item)));
+}
+
 // Rutas públicas: iniciar sesión y el chequeo de salud (que no expone datos).
 const RUTAS_PUBLICAS = new Set(["/api/auth/login", "/api/health"]);
 
@@ -115,12 +170,15 @@ app.post("/api/auth/login", async (req, res) => {
     }
     const usuario = user.Usuario || (user as any).usuario || (user as any).username || (user as any).Username;
     const rol = (user.Rol || (user as any).rol || (user as any).role || (user as any).Role) as Rol;
+    const sucursalAsignada = rol === "AdminSucursal" ? (user.Sucursal || "") : "";
     return res.json({
       Usuario: usuario,
       Rol: rol,
+      Sucursal: sucursalAsignada || undefined,
       // El servidor valida este token en cada operación: ya no basta con
-      // saberse la dirección web para entrar o borrar datos.
-      token: crearToken(usuario, rol),
+      // saberse la dirección web para entrar o borrar datos. La sucursal viaja
+      // firmada dentro del token, así que el navegador no puede cambiarla.
+      token: crearToken(usuario, rol, sucursalAsignada),
     });
   } else {
     return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
@@ -145,13 +203,21 @@ app.get("/api/admin/branch-configs", async (req, res) => {
     };
     await saveDb(db, ["branchConfigs"]);
   }
-  res.json(db.branchConfigs);
+  // Cada sesión solo recibe la configuración de las sucursales que puede ver.
+  const visibles: { [branch: string]: any } = {};
+  for (const [nombre, cfg] of Object.entries(db.branchConfigs)) {
+    if (puedeVerSucursal(req, nombre)) visibles[nombre] = cfg;
+  }
+  res.json(visibles);
 });
 
 app.post("/api/admin/branch-configs", async (req, res) => {
   const { branch, baseCaja, recolectorPredeterminado, montoAlerta } = req.body;
   if (!branch) {
     return res.status(400).json({ error: "Sucursal requerida" });
+  }
+  if (!puedeVerSucursal(req, branch)) {
+    return res.status(403).json({ error: "No puedes modificar la configuración de esta sucursal." });
   }
 
   if (!db.branchConfigs) {
@@ -369,7 +435,7 @@ app.get("/api/price-history", (req, res) => {
 // Orders (Pedidos)
 app.get("/api/orders", (req, res) => {
   const { sucursal, fecha } = req.query;
-  let filtered = db.orders;
+  let filtered = filtrarPorSucursal(req, db.orders, (o) => o.Sucursal);
 
   if (sucursal) {
     filtered = filtered.filter(
@@ -387,6 +453,9 @@ app.post("/api/orders", async (req, res) => {
   const { sucursal, items, fecha } = req.body;
   if (!sucursal || !items || !Array.isArray(items)) {
     return res.status(400).json({ error: "Datos de pedido inválidos" });
+  }
+  if (!puedeVerSucursal(req, sucursal)) {
+    return res.status(403).json({ error: "No puedes registrar pedidos de esta sucursal." });
   }
 
   const orderDate = fecha || getColombiaDate();
@@ -757,7 +826,7 @@ app.get("/api/closures", (req, res) => {
     if (!Array.isArray(db.closures)) {
       db.closures = [];
     }
-    let filtered = db.closures;
+    let filtered = filtrarPorSucursal(req, db.closures, (c) => c && c.Sucursal);
     if (sucursal) {
       filtered = filtered.filter(
         (c) => c && String(c.Sucursal || "").toLowerCase().trim() === String(sucursal || "").toLowerCase().trim()
@@ -775,6 +844,10 @@ app.post("/api/closures", async (req, res) => {
     const { Fecha, Sucursal, Ventas_Totales, Gastos_Extra, Descripcion_Gastos, Persona_Recogio, Foto_Factura } = req.body;
     if (!Sucursal) {
       return res.status(400).json({ error: "Datos de cierre incompletos: Sucursal es requerida" });
+    }
+
+    if (!puedeVerSucursal(req, Sucursal)) {
+      return res.status(403).json({ error: "No puedes registrar cierres de esta sucursal." });
     }
 
     const closureDate = Fecha || getColombiaDate();
@@ -1089,7 +1162,7 @@ app.post("/api/payroll/schedules/bulk", async (req, res) => {
 
 // Get all wallet transactions for admin
 app.get("/api/wallet-transactions", (req, res) => {
-  res.json(db.walletTransactions);
+  res.json(filtrarPorSucursal(req, db.walletTransactions, (t) => t && t.Sucursal));
 });
 
 // Wallet balance and history per Branch
@@ -1097,12 +1170,25 @@ app.get("/api/wallet/:branch", (req, res) => {
   const { branch } = req.params;
   const isCentral = branch.toLowerCase().includes("central") || branch.toLowerCase().includes("nequi");
 
+  // El monedero central consolida el dinero de todas las sucursales, así que solo
+  // lo ve quien tiene alcance global. Un administrador de una sola sucursal
+  // conocería por ahí los totales de las demás.
+  if (isCentral && req.auth?.r !== "Admin" && req.auth?.r !== "Comprador") {
+    return res.status(403).json({ error: "No tienes acceso al monedero central." });
+  }
+  if (!isCentral && !puedeVerSucursal(req, branch)) {
+    return res.status(403).json({ error: "No tienes acceso a esta sucursal." });
+  }
+
   let balance = 0;
   if (isCentral) {
-    const reconciledClosuresSum = (db.closures || [])
+    // Se suman solo las sucursales visibles: una sucursal con administrador propio
+    // queda fuera también de los totales del administrador general.
+    const reconciledClosuresSum = filtrarPorSucursal(req, db.closures || [], (c) => c && c.Sucursal)
       .filter((c) => c && c.Recaudado_Fisico)
       .reduce((acc, c) => acc + ((c.Ventas_Totales || 0) - (c.Gastos_Extra || 0)), 0);
-    const paidPayrollSum = (db.payroll || []).reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
+    const paidPayrollSum = filtrarPorSucursal(req, db.payroll || [], (p) => p && p.Sucursal)
+      .reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
 
     const centralTxs = (db.walletTransactions || []).filter((t) => {
       const s = (t?.Sucursal || "").toLowerCase().trim();
@@ -1230,7 +1316,7 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
 // Mermas (Shrinkage)
 app.get("/api/shrinkages", (req, res) => {
   const { sucursal } = req.query;
-  let filtered = db.shrinkages;
+  let filtered = filtrarPorSucursal(req, db.shrinkages, (s) => s && s.Sucursal);
   if (sucursal) {
     filtered = filtered.filter(
       (s) => s.Sucursal.toLowerCase().trim() === (sucursal as string).toLowerCase().trim()
@@ -1243,6 +1329,9 @@ app.post("/api/shrinkages", async (req, res) => {
   const { Fecha, Sucursal, Codigo, Cantidad, Unidad, Motivo, Foto } = req.body;
   if (!Sucursal || !Codigo || !Cantidad) {
     return res.status(400).json({ error: "Datos de merma incompletos" });
+  }
+  if (!puedeVerSucursal(req, Sucursal)) {
+    return res.status(403).json({ error: "No puedes registrar mermas de esta sucursal." });
   }
 
   const prod = db.products.find((p) => p.Codigo === Codigo);
@@ -1331,12 +1420,22 @@ app.post("/api/packaging", async (req, res) => {
 
 // Payroll schedules, loans and generating payroll
 app.get("/api/payroll/data", (req, res) => {
-  res.json({
-    schedules: db.schedules,
-    loans: db.loans,
-    rates: db.rates,
-    payroll: db.payroll,
-  });
+  // Horarios, préstamos y nómina son por sucursal. Las tarifas por empleado no
+  // llevan sucursal, así que se derivan de los empleados visibles.
+  const schedules = filtrarPorSucursal(req, db.schedules || [], (s) => s && s.Sucursal);
+  const loans = filtrarPorSucursal(req, db.loans || [], (l) => l && l.Sucursal);
+  const payroll = filtrarPorSucursal(req, db.payroll || [], (p) => p && p.Sucursal);
+
+  let rates = db.rates || [];
+  if (req.auth?.r === "AdminSucursal" || req.auth?.r === "Sucursal") {
+    const empleadosVisibles = new Set<string>();
+    for (const s of schedules) empleadosVisibles.add(norm(s.Empleado));
+    for (const l of loans) empleadosVisibles.add(norm(l.Empleado));
+    for (const p of payroll) empleadosVisibles.add(norm(p.Trabajador));
+    rates = rates.filter((r) => r && empleadosVisibles.has(norm(r.Empleado)));
+  }
+
+  res.json({ schedules, loans, rates, payroll });
 });
 
 app.post("/api/payroll/rates", async (req, res) => {

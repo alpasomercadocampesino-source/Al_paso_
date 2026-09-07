@@ -98,9 +98,18 @@ function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps
 interface AdminDashboardProps {
   adminName: string;
   lastGlobalSync?: number;
+  /**
+   * Si viene, este panel administra solo esa sucursal (rol AdminSucursal).
+   * El servidor ya filtra los datos; esto además limita lo que se puede elegir
+   * en pantalla para no ofrecer sucursales que la sesión no puede tocar.
+   */
+  sucursalAsignada?: string;
 }
 
-export default function AdminDashboard({ adminName, lastGlobalSync }: AdminDashboardProps) {
+export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsignada }: AdminDashboardProps) {
+  // Alcance de sucursales de esta sesión.
+  const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : DEFAULT_BRANCHES;
+  const esAdminDeUnaSucursal = !!sucursalAsignada;
   const [adminMode, setAdminMode] = useState<
     "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs"
   >("master");
@@ -185,7 +194,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync }: AdminDashb
   const [closuresFilterDate, setClosuresFilterDate] = useState<string>("");
   const [closuresFilterStartDate, setClosuresFilterStartDate] = useState<string>("");
   const [closuresFilterEndDate, setClosuresFilterEndDate] = useState<string>("");
-  const [selectedBranchForWalletHistory, setSelectedBranchForWalletHistory] = useState<string>("Nobsa");
+  const [selectedBranchForWalletHistory, setSelectedBranchForWalletHistory] = useState<string>(sucursalAsignada || "Nobsa");
 
   // Smart Voice-Order simulated recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -2318,10 +2327,10 @@ export default function AdminDashboard({ adminName, lastGlobalSync }: AdminDashb
   const reconciledClosuresSum = calculateReconciledClosuresSum(closures);
   const paidPayrollSum = calculatePaidPayrollSum(payroll);
   const nequiCentralBalance = calculateCentralBalance(closures, payroll, walletTxs);
-  const totalNoRecaudado = calculateTotalUncollected(closures, walletTxs, DEFAULT_BRANCHES);
+  const totalNoRecaudado = calculateTotalUncollected(closures, walletTxs, sucursalesPermitidas);
   const totalStoreExpenses = closures.reduce((acc, c) => acc + (c.Gastos_Extra || 0), 0);
 
-  const branches = DEFAULT_BRANCHES;
+  const branches = sucursalesPermitidas;
 
   const getBranchUncollected = (branchName: string) => calculateBranchUncollected(closures, walletTxs, branchName);
   const getBranchPendingCount = (branchName: string) => getBranchPendingCountUtil(closures, branchName);
@@ -3324,25 +3333,32 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
 
 
-            <button
-              onClick={() => setAdminMode("users")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                adminMode === "users" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5 text-amber-300" />
-              Contraseñas
-            </button>
+            {/* Gestión de usuarios y logs son de alcance global: el servidor solo se
+                los permite al administrador general, así que a un administrador de
+                sucursal no se le ofrecen (verían un error de permisos). */}
+            {!esAdminDeUnaSucursal && (
+              <button
+                onClick={() => setAdminMode("users")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  adminMode === "users" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5 text-amber-300" />
+                Contraseñas
+              </button>
+            )}
 
-            <button
-              onClick={() => setAdminMode("sync_logs")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                adminMode === "sync_logs" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
-              }`}
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-cyan-300" />
-              Logs Sincronización
-            </button>
+            {!esAdminDeUnaSucursal && (
+              <button
+                onClick={() => setAdminMode("sync_logs")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  adminMode === "sync_logs" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+                }`}
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-cyan-300" />
+                Logs Sincronización
+              </button>
+            )}
 
 
           </div>
@@ -5649,7 +5665,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                             }
                           } = {};
 
-                          const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+                          const branches = sucursalesPermitidas;
 
                           accountsOrders.forEach((o) => {
                             const prov = o.Proveedor || "Sin Proveedor";
@@ -5835,7 +5851,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                       const filtered = allOrdersForReport.filter(o => o.Fecha >= reportStartDate && o.Fecha <= reportEndDate);
                       
                       // Sheet 1: Resumen por sucursal
-                      const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+                      const branches = sucursalesPermitidas;
                       const branchTotals = branches.map(b => {
                         const branchOrders = filtered.filter(o => o.Sucursal.trim().toLowerCase() === b.toLowerCase());
                         const compradoReal = branchOrders.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0), 0);
@@ -5932,7 +5948,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
               const totalItemsComprados = filtered.filter(o => o.Estado === "Comprado" && (o.Cantidad_Comprada || 0) > 0).length;
 
               // Agrupar por sucursal
-              const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+              const branches = sucursalesPermitidas;
               const branchData: { [key: string]: { compradoReal: number; estimadoSolicitado: number; kilos: number; count: number } } = {};
               
               branches.forEach(b => {
@@ -8906,7 +8922,9 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                       {branches.map(b => (
                         <option key={b} value={b}>{b}</option>
                       ))}
-                      <option value="Central / Nequi">Central / Nequi</option>
+                      {/* El monedero central consolida todas las sucursales, así que
+                          no se ofrece a un administrador de una sola. */}
+                      {!esAdminDeUnaSucursal && <option value="Central / Nequi">Central / Nequi</option>}
                     </select>
                   </div>
                 </div>
@@ -10181,7 +10199,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                     <div>
                       <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-2">2. Ingresar Cantidades por Sucursal ({selectedProductForNewOrder.Medida})</label>
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                        {["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"].map((branchName) => (
+                        {sucursalesPermitidas.map((branchName) => (
                           <div key={branchName} className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col items-center">
                             <span className="text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">{branchName}</span>
                             <input

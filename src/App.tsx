@@ -12,7 +12,9 @@ installAuthFetch();
 
 interface SessionUser {
   Usuario: string;
-  Rol: "Admin" | "Comprador" | "Sucursal";
+  Rol: "Admin" | "Comprador" | "Sucursal" | "AdminSucursal";
+  /** Solo para AdminSucursal: la única sucursal que administra. */
+  Sucursal?: string;
   token?: string;
 }
 
@@ -178,7 +180,7 @@ export default function App() {
               <div className="text-left">
                 <div className="text-xs font-extrabold text-[#2A3B2E] leading-none">{user.Usuario}</div>
                 <div className="text-[9px] font-bold text-[#8A7F63] mt-0.5 uppercase tracking-wider">
-                  {user.Rol === "Admin" ? "Administrador" : user.Rol === "Comprador" ? "Comprador Plaza" : "Sucursal"}
+                  {user.Rol === "Admin" ? "Administrador" : user.Rol === "Comprador" ? "Comprador Plaza" : user.Rol === "AdminSucursal" ? `Admin · ${user.Sucursal || ""}` : "Sucursal"}
                 </div>
               </div>
             </div>
@@ -301,6 +303,8 @@ export default function App() {
       {/* Main Area based on Role */}
       <div className="flex-1">
         {user.Rol === "Admin" && <AdminDashboard adminName={user.Usuario} lastGlobalSync={lastGlobalSync} />}
+        {/* Mismo panel de administración, restringido a una sola sucursal. */}
+        {user.Rol === "AdminSucursal" && <AdminDashboard adminName={user.Usuario} lastGlobalSync={lastGlobalSync} sucursalAsignada={user.Sucursal} />}
         {user.Rol === "Comprador" && <CompradorDashboard username={user.Usuario} lastGlobalSync={lastGlobalSync} />}
         {user.Rol === "Sucursal" && <SucursalDashboard branchName={user.Usuario} lastGlobalSync={lastGlobalSync} />}
       </div>
