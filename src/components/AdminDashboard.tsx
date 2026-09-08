@@ -6150,8 +6150,10 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
               const totalRealComprado = filtered.reduce((sum, o) => sum + (valorAPagarPedido(o)), 0);
               const totalEstimadoSolicitado = filtered.reduce((sum, o) => sum + (parseQty(o.Cantidad) * costoUnitarioPedido(o)), 0);
               const compliancePercentage = totalEstimadoSolicitado > 0 ? (totalRealComprado / totalEstimadoSolicitado) * 100 : 0;
-              const totalKilosComprados = filtered.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Kilos || 0) : 0), 0);
-              const totalItemsComprados = filtered.filter(o => o.Estado === "Comprado" && (o.Cantidad_Comprada || 0) > 0).length;
+              // Mismo criterio que el dinero, para que los indicadores no se
+              // contradigan entre sí en la misma pantalla.
+              const totalKilosComprados = filtered.reduce((sum, o) => sum + (valorAPagarPedido(o) > 0 ? (o.Kilos || 0) : 0), 0);
+              const totalItemsComprados = filtered.filter(o => valorAPagarPedido(o) > 0).length;
 
               // Agrupar por sucursal
               const branches = sucursalesPermitidas;
@@ -6170,11 +6172,13 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                   
                   branchData[matchedBranch].compradoReal += valReal;
                   branchData[matchedBranch].estimadoSolicitado += valEst;
-                  if (o.Estado === "Comprado") {
+                  // Los items y kilos siguen la misma regla que el dinero: si el
+                  // renglón aporta a lo que hay que pagar, también cuenta aquí.
+                  // Antes solo contaban los marcados "Comprado" y la tarjeta
+                  // quedaba diciendo "0 items" junto a un valor de millones.
+                  if (valorAPagarPedido(o) > 0) {
                     branchData[matchedBranch].kilos += o.Kilos || 0;
-                    if ((o.Cantidad_Comprada || 0) > 0) {
-                      branchData[matchedBranch].count++;
-                    }
+                    branchData[matchedBranch].count++;
                   }
                 }
               });
