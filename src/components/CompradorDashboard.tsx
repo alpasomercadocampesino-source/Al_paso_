@@ -2880,10 +2880,15 @@ export default function CompradorDashboard({ username, isAdminView = false, last
             {/* 1. Branch Wallets Status Grid */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
               <h3 className="text-lg font-bold text-slate-800 mb-2">💰 Saldo Acumulado a Recoger (Historial de Monederos)</h3>
-              <p className="text-slate-400 text-xs mb-6">Consulte el saldo neto actual en el monedero de cada sucursal que debe ser recogido físicamente por el transportador o comprador.</p>
+              <p className="text-slate-400 text-xs mb-6">
+                Consulte el saldo neto actual en el monedero de cada sucursal que debe ser recogido físicamente por el
+                transportador o comprador. <strong className="text-slate-600">Puede recoger el total o solo una parte</strong> —
+                al pulsar el botón se escribe cuánto se recogió de verdad.
+              </p>
 
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                {["Nobsa", "Tibasosa", "Fira", "Aquitania", "Hansel"].map((bName) => {
+              {/* La lista sale de las sucursales activas: una sucursal nueva aparece sola. */}
+              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
+                {sucursales.map((bName) => {
                   const uncollected = getBranchUncollected(bName);
                   const count = getBranchPendingCount(bName);
                   return (
@@ -2924,8 +2929,13 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                           }`}
                         >
                           <Check className="w-3.5 h-3.5" />
-                          {loading ? "Sincronizando..." : count > 0 ? "Confirmar Recibo" : "Sin pendientes"}
+                          {loading ? "Sincronizando..." : count > 0 ? "Recoger efectivo" : "Sin pendientes"}
                         </button>
+                        {count > 0 && (
+                          <p className="text-[9px] text-slate-400 font-semibold text-center mt-1.5 leading-tight">
+                            Total o parcial
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
@@ -3893,6 +3903,30 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                       >
                         Recoger Todo
                       </button>
+                    </div>
+
+                    {/* Atajos para recoger una parte: rara vez se recoge el total exacto. */}
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Recoger:</span>
+                      {[
+                        { etiqueta: "Mitad", factor: 0.5 },
+                        { etiqueta: "3/4", factor: 0.75 },
+                        { etiqueta: "Todo", factor: 1 },
+                      ].map((op) => (
+                        <button
+                          key={op.etiqueta}
+                          type="button"
+                          onClick={() =>
+                            setPickupAmount(String(Math.round((pickupModal.totalAmount * op.factor) / 50) * 50))
+                          }
+                          className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] rounded-md transition cursor-pointer"
+                        >
+                          {op.etiqueta}
+                        </button>
+                      ))}
+                      <span className="text-[9px] text-slate-400 font-semibold ml-1">
+                        o escriba el valor exacto
+                      </span>
                     </div>
                   </div>
 

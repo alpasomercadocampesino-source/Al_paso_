@@ -2546,7 +2546,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   // Smart Payroll Helpers
   const employees = Array.from(new Set(rates.map((r) => r.Empleado))).filter(Boolean);
   const daysOfWeek = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO"];
-  const availableStores = ["Descanso", "Plaza", "Nobsa", "Tibasosa", "Fira", "Aquitania", "Hansel"];
+  const availableStores = ["Descanso", "Plaza", ...sucursalesPermitidas];
 
   const getDailyRate = (emp: string) => {
     const rateObj = rates.find((r) => r.Empleado.toLowerCase() === emp.toLowerCase());
@@ -6058,7 +6058,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                         const bName = o.Sucursal.trim();
                         const val = o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0;
                         if (!providerSummary[prov]) {
-                          providerSummary[prov] = { "Tibasosa": 0, "Nobsa": 0, "Fira": 0, "Aquitania": 0, "Hansel": 0 };
+                          providerSummary[prov] = Object.fromEntries(branches.map((b) => [b, 0]));
                         }
                         const canonicalBranch = branches.find(b => b.toLowerCase() === bName.toLowerCase());
                         if (canonicalBranch) {
@@ -6069,11 +6069,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                         const total = Object.values(bMap).reduce((sum, v) => sum + v, 0);
                         return {
                           "Proveedor": prov,
-                          "Tibasosa": bMap["Tibasosa"],
-                          "Nobsa": bMap["Nobsa"],
-                          "Fira": bMap["Fira"],
-                          "Aquitania": bMap["Aquitania"],
-                          "Hansel": bMap["Hansel"],
+                          ...Object.fromEntries(branches.map((b) => [b, bMap[b] ?? 0])),
                           "Total Comprado (Real)": total
                         };
                       });
