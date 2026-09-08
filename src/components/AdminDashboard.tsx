@@ -146,6 +146,8 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // State filters for master catalog
   const [filterPriceChanges, setFilterPriceChanges] = useState<"all" | "buy" | "sell" | "any">("all");
+  // Ver solo los productos que alguna sucursal pidió en la fecha seleccionada.
+  const [soloPedidos, setSoloPedidos] = useState(false);
   const [factorsSearch, setFactorsSearch] = useState("");
 
   // Modal state for adding product in Factors & Weights tab
@@ -1932,34 +1934,25 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       const edit = matrixEdits[code] || {};
       const prodOrders = matrixOrders.filter((o) => o.Codigo === code);
 
-      let tibasosa = "-";
-      let nobsa = "-";
-      let fira = "-";
-      let aquitania = "-";
-      let hansel = "-";
+      // Cantidad pedida por sucursal. Se arma desde la lista de sucursales activas
+      // (no de nombres escritos a mano) para que una sucursal nueva aparezca sola.
+      const cantidadPorSucursal: Record<string, string> = {};
+      for (const b of sucursalesPermitidas) cantidadPorSucursal[b] = "-";
 
       prodOrders.forEach((o) => {
         const branch = o.Sucursal.trim().toLowerCase();
-        if (branch === "tibasosa") tibasosa = String(o.Cantidad);
-        else if (branch === "nobsa") nobsa = String(o.Cantidad);
-        else if (branch === "fira") fira = String(o.Cantidad);
-        else if (branch === "aquitania") aquitania = String(o.Cantidad);
-        else if (branch === "hansel") hansel = String(o.Cantidad);
+        const match = sucursalesPermitidas.find((b) => b.toLowerCase() === branch);
+        if (match) cantidadPorSucursal[match] = String(o.Cantidad);
       });
 
-      if (edit.Tibasosa !== undefined) tibasosa = String(edit.Tibasosa);
-      if (edit.Nobsa !== undefined) nobsa = String(edit.Nobsa);
-      if (edit.Fira !== undefined) fira = String(edit.Fira);
-      if (edit.Aquitania !== undefined) aquitania = String(edit.Aquitania);
-      if (edit.Hansel !== undefined) hansel = String(edit.Hansel);
+      for (const b of sucursalesPermitidas) {
+        if (edit[b] !== undefined) cantidadPorSucursal[b] = String(edit[b]);
+      }
 
-      const qtyTibasosa = parseQty(tibasosa);
-      const qtyNobsa = parseQty(nobsa);
-      const qtyFira = parseQty(fira);
-      const qtyAquitania = parseQty(aquitania);
-      const qtyHansel = parseQty(hansel);
-
-      const requerido = qtyTibasosa + qtyNobsa + qtyFira + qtyAquitania + qtyHansel;
+      const requerido = sucursalesPermitidas.reduce(
+        (suma, b) => suma + parseQty(cantidadPorSucursal[b]),
+        0
+      );
 
       const providerName = edit.Proveedor !== undefined ? edit.Proveedor : (p.Proveedor || "Sin Proveedor");
       const precioCompra = edit.Costo_Momento !== undefined ? parseFloat(edit.Costo_Momento) || 0 : p.Costo_Proveedor || 0;
@@ -1998,34 +1991,20 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       const precioVentaAnt = p.Venta_Anterior || p.Precio_Venta_Actual || 0;
       const ventaKl = edit.Precio_Venta_Actual !== undefined ? parseFloat(edit.Precio_Venta_Actual) || 0 : p.Precio_Venta_Actual || 0;
 
-      const tibasosaPag = qtyTibasosa * precioCompra;
-      const nobsaPag = qtyNobsa * precioCompra;
-      const firaPag = qtyFira * precioCompra;
-      const aquitaniaPag = qtyAquitania * precioCompra;
-      const hanselPag = qtyHansel * precioCompra;
-      const total = requerido * precioCompra;
-
       const merma = edit.Merma !== undefined ? parseFloat(edit.Merma) : (p.Merma !== undefined ? p.Merma : 0);
 
       return {
         Fecha: matrixDate,
         Codigo: code,
         Producto: edit.Producto !== undefined ? edit.Producto : p.Producto,
-        Tibasosa: tibasosa,
-        Nobsa: nobsa,
-        Fira: fira,
-        Aquitania: aquitania,
-        Hansel: hansel,
+        // Una clave por sucursal activa (antes eran cinco campos fijos).
+        ...cantidadPorSucursal,
         Proveedor: providerName,
         Precio_Compra: precioCompra,
         Requerido: requerido,
         Observacion: observacion,
-        Tibasosa_Pag: tibasosaPag,
-        Nobsa_Pag: nobsaPag,
-        Fira_Pag: firaPag,
-        Aquitania_Pag: aquitaniaPag,
-        Hansel_Pag: hanselPag,
-        Total: total,
+        // "Se pidió": permite filtrar el catálogo a solo lo pedido en esta fecha.
+        Pedido: requerido > 0,
         Precio_Anterior: precioAnterior,
         Cambio: cambio,
         ME: me,
@@ -2036,10 +2015,10 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
         Precio_Venta_Ant: precioVentaAnt,
         Venta_Kl: ventaKl,
         isPlaza: PLAZA_CODES.has(code.toUpperCase()),
-        Producto2: p.Producto
       };
     })
     .filter((row) => {
+      if (soloPedidos && !row.Pedido) return false;
       if (filterPriceChanges === "buy") {
         return row.Precio_Compra !== row.Precio_Anterior;
       }
@@ -2063,8 +2042,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
         cmp = a.Requerido - b.Requerido;
       } else if (matrixSortField === "Precio_Compra") {
         cmp = a.Precio_Compra - b.Precio_Compra;
-      } else if (matrixSortField === "Total") {
-        cmp = a.Total - b.Total;
       } else if (matrixSortField === "Utilidad") {
         cmp = a.Utilidad - b.Utilidad;
       } else {
@@ -2074,6 +2051,56 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       }
       return matrixSortDir === "asc" ? cmp : -cmp;
     });
+  };
+
+  /**
+   * Descarga el Catálogo Maestro en Excel tal como está en pantalla: respeta la
+   * búsqueda, los filtros y el orden actuales, y usa las mismas columnas.
+   */
+  const handleExportCatalogoXLSX = () => {
+    const filas = getAdminMatrixData();
+    if (filas.length === 0) {
+      setErrorMsg("No hay productos para exportar con los filtros actuales.");
+      return;
+    }
+
+    const datos = filas.map((row) => {
+      const fila: Record<string, any> = {
+        "FECHA PED": row.Fecha,
+        "COD": row.Codigo,
+        "PRODUCTO": row.Producto,
+      };
+      // Una columna por sucursal, igual que en la tabla.
+      for (const b of sucursalesPermitidas) {
+        fila[b.toUpperCase()] = (row as any)[b] ?? "-";
+      }
+      fila["PEDIDO"] = row.Pedido ? "SÍ" : "NO";
+      fila["PROVEEDOR"] = row.Proveedor;
+      fila["PRECIO COMPRA"] = row.Precio_Compra;
+      fila["REQUERIDO"] = row.Requerido;
+      fila["OBSERVACION"] = row.Observacion;
+      fila["PRECIO ANT."] = row.Precio_Anterior;
+      fila["CAMBIO $"] = row.Cambio;
+      fila["PESO BTO (Kg)"] = row.Factor_Bulto;
+      fila["PESO CAN (Kg)"] = row.Factor_Canastilla;
+      fila["% MERMA"] = row.Merma;
+      fila["% UTILIDAD"] = row.Utilidad;
+      fila["VENTA ANT."] = row.Precio_Venta_Ant;
+      fila["S VENTA KL"] = row.Venta_Kl;
+      return fila;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(datos);
+    const anchoFijo = [{ wch: 12 }, { wch: 10 }, { wch: 28 }];
+    const anchoSucursales = sucursalesPermitidas.map(() => ({ wch: 11 }));
+    ws["!cols"] = [...anchoFijo, ...anchoSucursales, ...Array(13).fill({ wch: 14 })];
+    // Fija el encabezado y las columnas de código/producto al desplazarse en Excel.
+    ws["!freeze"] = { xSplit: 3, ySplit: 1 };
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Catálogo Maestro");
+    XLSX.writeFile(wb, `Catalogo_Maestro_${matrixDate}.xlsx`);
+    setSuccessMsg(`Catálogo exportado: ${filas.length} productos.`);
   };
 
   const getFactorsFilteredProducts = () => {
@@ -3607,6 +3634,39 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                     Cualquier Cambio
                   </button>
                 </div>
+
+                {/* Mostrar solo lo que alguna sucursal pidió en la fecha seleccionada. */}
+                <div className="flex items-center gap-2 bg-slate-950/60 p-1 rounded-xl border border-slate-800 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setSoloPedidos(false)}
+                    className={`px-3 py-1 rounded-lg transition ${
+                      !soloPedidos ? "bg-emerald-500 text-slate-950 font-black" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    Todos los productos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSoloPedidos(true)}
+                    title="Ver solo los productos que alguna sucursal pidió en esta fecha"
+                    className={`px-3 py-1 rounded-lg transition flex items-center gap-1 ${
+                      soloPedidos ? "bg-rose-600 text-white font-black" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    Solo lo pedido
+                  </button>
+                </div>
+
+                {/* Descarga el catálogo tal como se está viendo (filtros y orden incluidos). */}
+                <button
+                  type="button"
+                  onClick={handleExportCatalogoXLSX}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Descargar en Excel
+                </button>
               </div>
             </div>
 
@@ -3839,16 +3899,13 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <thead className="sticky top-0 z-30 shadow-xs bg-white">
                     {/* Level 1 Headers: PEDIDO, PAGOS, PRECIO DE VENTA groups */}
                     <tr className="text-center font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
-                      <th colSpan={8} className="bg-rose-600 text-white py-2 px-3 border-r border-rose-700">
+                      <th colSpan={3 + sucursalesPermitidas.length} className="bg-rose-600 text-white py-2 px-3 border-r border-rose-700">
                         PEDIDO
                       </th>
                       <th colSpan={4} className="bg-amber-100 text-amber-900 py-2 px-3 border-r border-slate-300">
                         DATOS PRODUCTO / PROVEEDOR
                       </th>
-                      <th colSpan={6} className="bg-emerald-600 text-white py-2 px-3 border-r border-emerald-700">
-                        PAGOS (Calculados)
-                      </th>
-                      <th colSpan={10} className="bg-violet-700 text-white py-2 px-3">
+                      <th colSpan={9} className="bg-violet-700 text-white py-2 px-3">
                         PRECIOS DE VENTA & MARGENES
                       </th>
                     </tr>
@@ -3859,7 +3916,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       <th className="py-2.5 px-2 border-r border-slate-200">FECHA PED</th>
                       <th 
                         onClick={() => toggleMatrixSort("Codigo")}
-                        className="py-2.5 px-2 border-r border-slate-200 cursor-pointer hover:bg-slate-200 transition"
+                        className="py-2.5 px-2 border-r border-slate-200 cursor-pointer hover:bg-slate-200 transition sticky left-0 z-20 bg-slate-50"
                       >
                         <div className="flex items-center gap-1">
                           <span>COD</span>
@@ -3868,18 +3925,16 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       </th>
                       <th 
                         onClick={() => toggleMatrixSort("Producto")}
-                        className="py-2.5 px-2 border-r border-slate-200 min-w-[180px] cursor-pointer hover:bg-slate-200 transition text-slate-900 font-black"
+                        className="py-2.5 px-2 border-r border-slate-200 min-w-[180px] cursor-pointer hover:bg-slate-200 transition text-slate-900 font-black sticky left-[70px] z-20 bg-slate-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]"
                       >
                         <div className="flex items-center gap-1">
                           <span>PRODUCTO</span>
                           {matrixSortField === "Producto" ? (matrixSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                         </div>
                       </th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-center w-16">TIBASOSA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-center w-16">NOBSA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-center w-16">FIRA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-center w-16">AQUITANIA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-center w-16">HANSEL</th>
+                      {sucursalesPermitidas.map((b) => (
+                        <th key={b} className="py-2.5 px-2 border-r border-slate-200 text-center w-16 uppercase">{b}</th>
+                      ))}
 
                       {/* DATOS PROV */}
                       <th 
@@ -3911,22 +3966,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       </th>
                       <th className="py-2.5 px-2 border-r border-slate-200 min-w-[150px]">OBSERVACION</th>
 
-                      {/* PAGOS */}
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-right">TIBASOSA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-right">NOBSA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-right">FIRA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-right">AQUITANIA</th>
-                      <th className="py-2.5 px-2 border-r border-slate-200 text-right">HANSEL</th>
-                      <th 
-                        onClick={() => toggleMatrixSort("Total")}
-                        className="py-2.5 px-2 border-r border-slate-200 text-right bg-emerald-50/50 text-emerald-900 font-extrabold cursor-pointer hover:bg-emerald-100 transition"
-                      >
-                        <div className="flex items-center justify-end gap-1">
-                          <span>TOTAL</span>
-                          {matrixSortField === "Total" && (matrixSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-700" /> : <ArrowDown className="w-3 h-3 text-emerald-700" />)}
-                        </div>
-                      </th>
-
                       {/* PRECIO DE VENTA */}
                       <th className="py-2.5 px-2 border-r border-slate-200 text-right">PRECIO UNIT.</th>
                       <th className="py-2.5 px-2 border-r border-slate-200 text-right text-slate-400">PRECIO ANT.</th>
@@ -3937,7 +3976,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       <th className="py-2.5 px-2 border-r border-slate-200 text-center w-20">% UTILIDAD</th>
                       <th className="py-2.5 px-2 border-r border-slate-200 text-right text-slate-400">VENTA ANT.</th>
                       <th className="py-2.5 px-2 border-r border-slate-200 text-right bg-violet-50 text-violet-900 font-black">S VENTA KL</th>
-                      <th className="py-2.5 px-2 min-w-[180px]">PRODUCTO2</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-150">
@@ -3953,16 +3991,16 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           {/* FECHA PED */}
                           <td className="py-1.5 px-2 font-mono text-[10px] text-slate-500 border-r border-slate-150">{row.Fecha}</td>
                           
-                          {/* COD */}
-                          <td className="py-1.5 px-2 font-mono font-bold text-[10px] text-slate-600 border-r border-slate-150">
+                          {/* COD — queda fijo al desplazarse a la derecha */}
+                          <td className="py-1.5 px-2 font-mono font-bold text-[10px] text-slate-600 border-r border-slate-150 sticky left-0 z-10 bg-white">
                             {row.Codigo}
                             {row.isPlaza && (
                               <span className="ml-1 px-1 bg-emerald-100 text-emerald-800 text-[8px] font-black rounded-sm uppercase">P</span>
                             )}
                           </td>
-                          
-                          {/* PRODUCTO */}
-                          <td className="py-1.5 px-2 border-r border-slate-150">
+
+                          {/* PRODUCTO — queda fijo al desplazarse a la derecha */}
+                          <td className="py-1.5 px-2 border-r border-slate-150 sticky left-[70px] z-10 bg-white shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                             <input
                               type="text"
                               value={row.Producto}
@@ -3993,55 +4031,17 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                             </div>
                           </td>
                           
-                          {/* TIBASOSA */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-center">
-                            <input
-                              type="text"
-                              value={row.Tibasosa}
-                              onChange={(e) => handleMatrixEdit(row.Codigo, "Tibasosa", e.target.value)}
-                              className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
-                            />
-                          </td>
-                          
-                          {/* NOBSA */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-center">
-                            <input
-                              type="text"
-                              value={row.Nobsa}
-                              onChange={(e) => handleMatrixEdit(row.Codigo, "Nobsa", e.target.value)}
-                              className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
-                            />
-                          </td>
-                          
-                          {/* FIRA */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-center">
-                            <input
-                              type="text"
-                              value={row.Fira}
-                              onChange={(e) => handleMatrixEdit(row.Codigo, "Fira", e.target.value)}
-                              className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
-                            />
-                          </td>
-                          
-                          {/* AQUITANIA */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-center">
-                            <input
-                              type="text"
-                              value={row.Aquitania}
-                              onChange={(e) => handleMatrixEdit(row.Codigo, "Aquitania", e.target.value)}
-                              className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
-                            />
-                          </td>
-                          
-                          {/* HANSEL */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-center">
-                            <input
-                              type="text"
-                              value={row.Hansel}
-                              onChange={(e) => handleMatrixEdit(row.Codigo, "Hansel", e.target.value)}
-                              className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
-                            />
-                          </td>
+                          {/* Una celda por sucursal activa */}
+                          {sucursalesPermitidas.map((b) => (
+                            <td key={b} className="py-1.5 px-2 border-r border-slate-150 text-center">
+                              <input
+                                type="text"
+                                value={(row as any)[b] ?? "-"}
+                                onChange={(e) => handleMatrixEdit(row.Codigo, b, e.target.value)}
+                                className="text-center font-bold text-slate-700 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:bg-white w-10 px-1 py-0.5 rounded transition text-xs"
+                              />
+                            </td>
+                          ))}
 
                           {/* PROVEEDOR */}
                           <td className="py-1.5 px-2 border-r border-slate-150">
@@ -4110,15 +4110,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                             />
                           </td>
 
-                          {/* PAGOS */}
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono text-slate-500">{cop(row.Tibasosa_Pag)}</td>
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono text-slate-500">{cop(row.Nobsa_Pag)}</td>
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono text-slate-500">{cop(row.Fira_Pag)}</td>
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono text-slate-500">{cop(row.Aquitania_Pag)}</td>
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono text-slate-500">{cop(row.Hansel_Pag)}</td>
-                          <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono font-extrabold text-emerald-950 bg-emerald-50/40 text-xs">
-                            {cop(row.Total)}
-                          </td>
 
                           {/* PRECIO DE VENTA */}
                           <td className="py-1.5 px-2 border-r border-slate-150 text-right font-mono font-semibold text-slate-600">{cop(row.Precio_Compra)}</td>
@@ -4210,10 +4201,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                             </div>
                           </td>
                           
-                          {/* PRODUCTO2 */}
-                          <td className="py-1.5 px-2 font-semibold text-slate-400 italic text-[10px] max-w-xs truncate" title={row.Producto2}>
-                            {row.Producto2}
-                          </td>
                         </tr>
                       );
                     })}

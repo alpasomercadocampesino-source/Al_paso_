@@ -71,6 +71,8 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   const [searchQuery, setSearchQuery] = useState("");
   const [draft, setDraft] = useState<{ [code: string]: { qty: string; note: string } }>({});
   const [previousOrderItems, setPreviousOrderItems] = useState<{ [code: string]: string }>({});
+  // Orden del historial de mermas: por defecto de la más reciente a la más antigua.
+  const [ordenMermas, setOrdenMermas] = useState<"reciente" | "antiguo">("reciente");
 
   // Merma Form State
   const [mermaProd, setMermaProd] = useState("");
@@ -1410,7 +1412,15 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                   <table className="w-full text-left text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-slate-100 text-slate-400 font-bold text-xs uppercase tracking-wider">
-                        <th className="py-3 px-2">Fecha</th>
+                        <th
+                          className="py-3 px-2 cursor-pointer select-none hover:text-slate-600 transition"
+                          title="Clic para ordenar por fecha"
+                          onClick={() => setOrdenMermas((o) => (o === "reciente" ? "antiguo" : "reciente"))}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            Fecha {ordenMermas === "reciente" ? "▼" : "▲"}
+                          </span>
+                        </th>
                         <th className="py-3 px-2">Código</th>
                         <th className="py-3 px-2">Producto</th>
                         <th className="py-3 px-2">Cantidad</th>
@@ -1420,7 +1430,10 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                       </tr>
                     </thead>
                     <tbody>
-                      {mermaHistory.map((m, idx) => (
+                      {[...mermaHistory].sort((a, b) => {
+                        const cmp = (a.Fecha || "").localeCompare(b.Fecha || "");
+                        return ordenMermas === "reciente" ? -cmp : cmp;
+                      }).map((m, idx) => (
                         <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition">
                           <td className="py-2 px-2 text-slate-500 font-medium text-xs">{m.Fecha}</td>
                           <td className="py-2 px-2 font-mono text-xs text-slate-400">{m.Codigo}</td>
