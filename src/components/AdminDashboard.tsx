@@ -107,9 +107,29 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsignada }: AdminDashboardProps) {
-  // Alcance de sucursales de esta sesión.
-  const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : DEFAULT_BRANCHES;
+  // Alcance de sucursales de esta sesión. La lista viene del servidor, que ya
+  // filtra según el rol (una sucursal con administrador propio no le aparece al
+  // administrador general). Así una sucursal nueva sale sola, sin tocar código.
   const esAdminDeUnaSucursal = !!sucursalAsignada;
+  const [sucursalesDelServidor, setSucursalesDelServidor] = useState<string[]>(DEFAULT_BRANCHES);
+  const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : sucursalesDelServidor;
+
+  useEffect(() => {
+    if (sucursalAsignada) return; // su alcance es una sola, no hace falta consultar
+    let vivo = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/branch-configs");
+        if (!res.ok) return; // se conserva la lista por defecto
+        const cfg = await res.json();
+        const nombres = Object.keys(cfg || {});
+        if (vivo && nombres.length > 0) setSucursalesDelServidor(nombres);
+      } catch {
+        /* sin red: se sigue con la lista por defecto */
+      }
+    })();
+    return () => { vivo = false; };
+  }, [sucursalAsignada]);
   const [adminMode, setAdminMode] = useState<
     "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas"
   >("master");
