@@ -8,7 +8,7 @@ import {
   ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, PhoneCall, AlertTriangle, CheckCircle2, Camera
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Product, Provider, PriceHistory, DailyClosure, WalletTransaction, EmployeeSchedule, EmployeeLoan, EmployeeRate, PayrollRecord, PackagingMovement, SyncLog } from "../types";
+import { Product, Provider, PriceHistory, DailyClosure, WalletTransaction, EmployeeSchedule, EmployeeLoan, EmployeeRate, PayrollRecord, PackagingMovement, SyncLog, Shrinkage } from "../types";
 import {
   calculateBranchUncollected,
   calculateTotalUncollected,
@@ -111,7 +111,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : DEFAULT_BRANCHES;
   const esAdminDeUnaSucursal = !!sucursalAsignada;
   const [adminMode, setAdminMode] = useState<
-    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs"
+    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas"
   >("master");
 
   // Sync Logs state
@@ -169,6 +169,10 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [products, setProducts] = useState<Product[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [priceHistory, setPriceHistory] = useState<PriceHistory[]>([]);
+  // Mermas: recuento mensual por producto.
+  const [shrinkages, setShrinkages] = useState<Shrinkage[]>([]);
+  const [mermaMes, setMermaMes] = useState(() => new Date().toISOString().slice(0, 7)); // "YYYY-MM"
+  const [mermaSucursal, setMermaSucursal] = useState<string>("all");
   
   // Price history visualization state
   const [historySelectedProduct, setHistorySelectedProduct] = useState<string>("all");
@@ -1483,6 +1487,16 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     } catch (e) {
       console.warn("Could not fetch closures sub-module data:", e);
     }
+
+    try {
+      const mermasRes = await fetch("/api/shrinkages");
+      if (mermasRes.ok) {
+        const mermasData = await mermasRes.json();
+        if (Array.isArray(mermasData)) setShrinkages(mermasData);
+      }
+    } catch (e) {
+      console.warn("No se pudieron cargar las mermas:", e);
+    }
     
     try {
       const packRes = await fetch("/api/packaging");
@@ -2053,6 +2067,79 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       }
       return matrixSortDir === "asc" ? cmp : -cmp;
     });
+  };
+
+  /**
+   * Recuento de mermas del mes seleccionado, agrupado por producto.
+   * La cantidad se suma en número; se conserva la unidad para mostrarla.
+   */
+  const mermasDelMes = (() => {
+    const enElMes = shrinkages.filter((m) => {
+      if (!m?.Fecha || !m.Fecha.startsWith(mermaMes)) return false;
+      if (mermaSucursal !== "all" && m.Sucursal !== mermaSucursal) return false;
+      return true;
+    });
+
+    const porProducto = new Map<
+      string,
+      { Codigo: string; Producto: string; Unidad: string; cantidad: number; perdida: number; registros: number; sucursales: Set<string> }
+    >();
+
+    for (const m of enElMes) {
+      const clave = m.Codigo;
+      const actual = porProducto.get(clave) || {
+        Codigo: m.Codigo,
+        Producto: m.Producto,
+        Unidad: m.Unidad || "Kg",
+        cantidad: 0,
+        perdida: 0,
+        registros: 0,
+        sucursales: new Set<string>(),
+      };
+      actual.cantidad += parseQty(m.Cantidad);
+      actual.perdida += m.Perdida_Monetaria || 0;
+      actual.registros += 1;
+      actual.sucursales.add(m.Sucursal);
+      porProducto.set(clave, actual);
+    }
+
+    // Lo más costoso primero: es lo que hay que atacar.
+    return Array.from(porProducto.values()).sort((a, b) => b.perdida - a.perdida);
+  })();
+
+  const mermasTotalMes = mermasDelMes.reduce((s, m) => s + m.perdida, 0);
+
+  const handleExportMermasXLSX = () => {
+    if (mermasDelMes.length === 0) {
+      setErrorMsg("No hay mermas registradas en el mes seleccionado.");
+      return;
+    }
+    const datos = mermasDelMes.map((m) => ({
+      "CÓDIGO": m.Codigo,
+      "PRODUCTO": m.Producto,
+      "CANTIDAD TOTAL": Math.round(m.cantidad * 100) / 100,
+      "UNIDAD": m.Unidad,
+      "PÉRDIDA TOTAL": m.perdida,
+      "N° REGISTROS": m.registros,
+      "SUCURSALES": Array.from(m.sucursales).join(", "),
+    }));
+    datos.push({
+      "CÓDIGO": "",
+      "PRODUCTO": "TOTAL DEL MES",
+      "CANTIDAD TOTAL": "" as any,
+      "UNIDAD": "",
+      "PÉRDIDA TOTAL": mermasTotalMes,
+      "N° REGISTROS": mermasDelMes.reduce((s, m) => s + m.registros, 0),
+      "SUCURSALES": "",
+    });
+
+    const ws = XLSX.utils.json_to_sheet(datos);
+    ws["!cols"] = [{ wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Mermas");
+    const sufijo = mermaSucursal === "all" ? "Todas" : mermaSucursal;
+    XLSX.writeFile(wb, `Mermas_${mermaMes}_${sufijo}.xlsx`);
+    setSuccessMsg(`Mermas exportadas: ${mermasDelMes.length} productos.`);
   };
 
   /**
@@ -3409,6 +3496,16 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
 
 
+
+            <button
+              onClick={() => setAdminMode("mermas")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                adminMode === "mermas" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-300" />
+              Mermas
+            </button>
 
             {/* Gestión de usuarios y logs son de alcance global: el servidor solo se
                 los permite al administrador general, así que a un administrador de
@@ -8632,6 +8729,121 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* MERMAS: recuento del mes por producto */}
+        {adminMode === "mermas" && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">Mermas por Producto</h3>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Cuánto se perdió de cada producto en el mes, ordenado de mayor a menor pérdida.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Mes</label>
+                    <input
+                      type="month"
+                      value={mermaMes}
+                      onChange={(e) => setMermaMes(e.target.value)}
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Sucursal</label>
+                    <select
+                      value={mermaSucursal}
+                      onChange={(e) => setMermaSucursal(e.target.value)}
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-400"
+                    >
+                      <option value="all">Todas</option>
+                      {sucursalesPermitidas.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportMermasXLSX}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Descargar en Excel
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl">
+                  <span className="text-[10px] font-black text-rose-500 uppercase tracking-wider block">Pérdida del mes</span>
+                  <span className="text-2xl font-black text-rose-700">{cop(mermasTotalMes)}</span>
+                </div>
+                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Productos afectados</span>
+                  <span className="text-2xl font-black text-slate-800">{mermasDelMes.length}</span>
+                </div>
+                <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Registros de merma</span>
+                  <span className="text-2xl font-black text-slate-800">
+                    {mermasDelMes.reduce((s, m) => s + m.registros, 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
+              {mermasDelMes.length === 0 ? (
+                <p className="text-slate-400 text-xs italic text-center py-16">
+                  No hay mermas registradas en este mes con los filtros seleccionados.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 font-black uppercase tracking-wider text-[10px]">
+                        <th className="py-3 px-2">Código</th>
+                        <th className="py-3 px-2">Producto</th>
+                        <th className="py-3 px-2 text-right">Cantidad total</th>
+                        <th className="py-3 px-2 text-right">Pérdida del mes</th>
+                        <th className="py-3 px-2 text-center">Registros</th>
+                        <th className="py-3 px-2">Sucursales</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mermasDelMes.map((m) => (
+                        <tr key={m.Codigo} className="border-b border-slate-50 hover:bg-slate-50/60 transition">
+                          <td className="py-2 px-2 font-mono text-[10px] text-slate-400">{m.Codigo}</td>
+                          <td className="py-2 px-2 font-bold text-slate-800">{m.Producto}</td>
+                          <td className="py-2 px-2 text-right font-bold text-slate-600 whitespace-nowrap">
+                            {Math.round(m.cantidad * 100) / 100} {m.Unidad}
+                          </td>
+                          <td className="py-2 px-2 text-right font-black text-rose-600 whitespace-nowrap">
+                            {cop(m.perdida)}
+                          </td>
+                          <td className="py-2 px-2 text-center font-bold text-slate-500">{m.registros}</td>
+                          <td className="py-2 px-2 text-[10px] text-slate-500 font-semibold">
+                            {Array.from(m.sucursales).join(", ")}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="bg-slate-50 font-black">
+                        <td className="py-3 px-2" colSpan={3}>TOTAL DEL MES</td>
+                        <td className="py-3 px-2 text-right text-rose-700 whitespace-nowrap">{cop(mermasTotalMes)}</td>
+                        <td className="py-3 px-2 text-center text-slate-600">
+                          {mermasDelMes.reduce((s, m) => s + m.registros, 0)}
+                        </td>
+                        <td className="py-3 px-2"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
