@@ -2318,6 +2318,33 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     }
   }, [adminMode, lastGlobalSync]);
 
+  /**
+   * Costo unitario a usar en el reporte de compras.
+   *
+   * El pedido guarda el costo del momento. Si viene en cero (el comprador aún no
+   * lo registró, o el producto no tenía precio ese día), se toma el precio actual
+   * del catálogo: así siempre aparece un valor, y si el precio se corrige después,
+   * el reporte se actualiza solo sin tener que volver a tocar el pedido.
+   */
+  const costoUnitarioPedido = (o: Order): number => {
+    if (o.Costo_Momento && o.Costo_Momento > 0) return o.Costo_Momento;
+    const prod = products.find((p) => p.Codigo === o.Codigo);
+    return prod?.Costo_Proveedor || 0;
+  };
+
+  /**
+   * Valor a pagar por un renglón de pedido.
+   *
+   * Antes daba cero mientras el pedido no estuviera marcado como "Comprado", así
+   * que la mayoría del reporte se veía en blanco. Ahora se usa la cantidad
+   * comprada cuando ya se registró, y la pedida mientras tanto, de modo que
+   * siempre haya un valor con el cual pagarle al proveedor.
+   */
+  const valorAPagarPedido = (o: Order): number => {
+    const cantidad = (o.Cantidad_Comprada || 0) > 0 ? (o.Cantidad_Comprada || 0) : parseQty(o.Cantidad);
+    return cantidad * costoUnitarioPedido(o);
+  };
+
   const handleMatrixEdit = (code: string, field: string, value: any) => {
     const currentEdit = matrixEdits[code] || {};
     currentEdit[field] = value;
@@ -5729,7 +5756,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                         {cop(
                           accountsOrders
                             .filter((o) => o.Estado === "Pendiente")
-                            .reduce((sum, o) => sum + parseQty(o.Cantidad) * (o.Costo_Momento || 0), 0)
+                            .reduce((sum, o) => sum + parseQty(o.Cantidad) * costoUnitarioPedido(o), 0)
                         )}
                       </span>
                     </div>
@@ -6037,8 +6064,8 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                       const branches = sucursalesPermitidas;
                       const branchTotals = branches.map(b => {
                         const branchOrders = filtered.filter(o => o.Sucursal.trim().toLowerCase() === b.toLowerCase());
-                        const compradoReal = branchOrders.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0), 0);
-                        const estimadoSolicitado = branchOrders.reduce((sum, o) => sum + (parseQty(o.Cantidad) * (o.Costo_Momento || 0)), 0);
+                        const compradoReal = branchOrders.reduce((sum, o) => sum + (valorAPagarPedido(o)), 0);
+                        const estimadoSolicitado = branchOrders.reduce((sum, o) => sum + (parseQty(o.Cantidad) * costoUnitarioPedido(o)), 0);
                         const kilos = branchOrders.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Kilos || 0) : 0), 0);
                         const itemsCount = branchOrders.length;
                         return {
@@ -6056,7 +6083,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                       filtered.forEach(o => {
                         const prov = o.Proveedor || "Sin Proveedor";
                         const bName = o.Sucursal.trim();
-                        const val = o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0;
+                        const val = valorAPagarPedido(o);
                         if (!providerSummary[prov]) {
                           providerSummary[prov] = Object.fromEntries(branches.map((b) => [b, 0]));
                         }
@@ -6083,9 +6110,9 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                         "Medida": o.Medida,
                         "Cantidad Solicitada": o.Cantidad,
                         "Cantidad Comprada": o.Cantidad_Comprada || 0,
-                        "Costo Unitario": o.Costo_Momento || 0,
-                        "Total Comprado (Real)": (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0),
-                        "Total Estimado": parseQty(o.Cantidad) * (o.Costo_Momento || 0),
+                        "Costo Unitario": costoUnitarioPedido(o),
+                        "Valor a Pagar": valorAPagarPedido(o),
+                        "Total Estimado": parseQty(o.Cantidad) * costoUnitarioPedido(o),
                         "Kilos": o.Kilos || 0,
                         "Estado": o.Estado
                       }));
@@ -6120,8 +6147,8 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
               const filtered = allOrdersForReport.filter(o => o.Fecha >= reportStartDate && o.Fecha <= reportEndDate);
               
               // Totales globales
-              const totalRealComprado = filtered.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0), 0);
-              const totalEstimadoSolicitado = filtered.reduce((sum, o) => sum + (parseQty(o.Cantidad) * (o.Costo_Momento || 0)), 0);
+              const totalRealComprado = filtered.reduce((sum, o) => sum + (valorAPagarPedido(o)), 0);
+              const totalEstimadoSolicitado = filtered.reduce((sum, o) => sum + (parseQty(o.Cantidad) * costoUnitarioPedido(o)), 0);
               const compliancePercentage = totalEstimadoSolicitado > 0 ? (totalRealComprado / totalEstimadoSolicitado) * 100 : 0;
               const totalKilosComprados = filtered.reduce((sum, o) => sum + (o.Estado === "Comprado" ? (o.Kilos || 0) : 0), 0);
               const totalItemsComprados = filtered.filter(o => o.Estado === "Comprado" && (o.Cantidad_Comprada || 0) > 0).length;
@@ -6138,8 +6165,8 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                 const bName = o.Sucursal.trim();
                 const matchedBranch = branches.find(b => b.toLowerCase() === bName.toLowerCase());
                 if (matchedBranch) {
-                  const valReal = o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0;
-                  const valEst = parseQty(o.Cantidad) * (o.Costo_Momento || 0);
+                  const valReal = valorAPagarPedido(o);
+                  const valEst = parseQty(o.Cantidad) * costoUnitarioPedido(o);
                   
                   branchData[matchedBranch].compradoReal += valReal;
                   branchData[matchedBranch].estimadoSolicitado += valEst;
@@ -6174,13 +6201,13 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                   providerData[prov] = {
                     proveedor: prov,
                     totalReal: 0,
-                    sucursales: { Tibasosa: 0, Nobsa: 0, Fira: 0, Aquitania: 0, Hansel: 0 }
+                    sucursales: Object.fromEntries(branches.map((b) => [b, 0]))
                   };
                 }
 
                 const bName = o.Sucursal.trim();
                 const matchedBranch = branches.find(b => b.toLowerCase() === bName.toLowerCase());
-                const valReal = o.Estado === "Comprado" ? (o.Cantidad_Comprada || 0) * (o.Costo_Momento || 0) : 0;
+                const valReal = valorAPagarPedido(o);
 
                 providerData[prov].totalReal += valReal;
                 if (matchedBranch) {
