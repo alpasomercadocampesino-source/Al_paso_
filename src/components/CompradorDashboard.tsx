@@ -22,6 +22,7 @@ import { getColombiaDate } from "../utils/date";
 import {
   calculateBranchUncollected,
   getBranchPendingCount as getBranchPendingCountUtil,
+  DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
 
 interface CompradorDashboardProps {
@@ -98,6 +99,26 @@ export default function CompradorDashboard({ username, isAdminView = false, last
     setValorRealRecogido(val);
     localStorage.setItem("valor_real_recogido", String(val));
   };
+
+  // Sucursales activas. Vienen del servidor (no de una lista fija en el código)
+  // para que una sucursal nueva aparezca sola, sin tener que tocar el código.
+  const [sucursales, setSucursales] = useState<string[]>(DEFAULT_BRANCHES);
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/branch-configs");
+        if (!res.ok) return; // se conserva la lista por defecto
+        const cfg = await res.json();
+        const nombres = Object.keys(cfg || {});
+        if (vivo && nombres.length > 0) setSucursales(nombres);
+      } catch {
+        /* sin red: se sigue con la lista por defecto */
+      }
+    })();
+    return () => { vivo = false; };
+  }, []);
 
   // Closures state
   const [closures, setClosures] = useState<DailyClosure[]>([]);
@@ -981,7 +1002,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       });
 
       // 2. Identify and create brand-new branch orders if quantity was edited but no order existed
-      const branchesList = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+      const branchesList = sucursales;
       branchesList.forEach((bName) => {
         const bLower = (bName || "").toLowerCase();
         const qtyKey = `${bName}_Qty`;
@@ -2220,7 +2241,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                 ) : viewMode === "by_branch" ? (
                   /* 2. BY-BRANCH VIEW */
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    {["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"].map((branchName) => {
+                    {sucursales.map((branchName) => {
                       const branchItems = plazaMatrixData.filter((row) => {
                         const bVal = row[branchName];
                         return parseQty(bVal) > 0;
@@ -2611,7 +2632,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                             {/* OBSERVACION (Interactive sub-inputs per active branch) */}
                             <td className="py-1.5 px-2 border-r border-slate-100 text-slate-650 min-w-[200px]">
                               <div className="flex flex-col gap-1">
-                                {["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"].map((branchName) => {
+                                {sucursales.map((branchName) => {
                                   const bVal = row[branchName];
                                   const qty = parseQty(bVal);
                                   const keyObs = `${branchName}_Obs`;
@@ -2636,7 +2657,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                                     </div>
                                   );
                                 })}
-                                {!["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"].some(b => parseQty(row[b]) > 0 || (matrixEdits[row.Codigo]?.[`${b}_Obs`] !== undefined ? matrixEdits[row.Codigo][`${b}_Obs`] : row[`${b}_Obs`])) && (
+                                {!sucursales.some(b => parseQty(row[b]) > 0 || (matrixEdits[row.Codigo]?.[`${b}_Obs`] !== undefined ? matrixEdits[row.Codigo][`${b}_Obs`] : row[`${b}_Obs`])) && (
                                   <span className="text-slate-400 italic text-[10px]">Sin pedidos</span>
                                 )}
                               </div>
@@ -3727,7 +3748,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                     <div>
                       <label className="block text-xs font-black text-slate-600 uppercase tracking-wide mb-2">2. Ingresar Cantidades por Sucursal ({selectedProductForNewOrder.Medida})</label>
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                        {["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"].map((branchName) => (
+                        {sucursales.map((branchName) => (
                           <div key={branchName} className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col items-center">
                             <span className="text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">{branchName}</span>
                             <input
