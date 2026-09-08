@@ -2244,6 +2244,9 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   }, [adminMode, lastGlobalSync]);
 
   const fetchUsers = async () => {
+    // La gestión de usuarios es de alcance global: un administrador de sucursal
+    // no tiene esa pestaña, así que tampoco se pide la lista (daría 403).
+    if (esAdminDeUnaSucursal) return;
     try {
       const res = await fetch("/api/users");
       if (res.ok) {
