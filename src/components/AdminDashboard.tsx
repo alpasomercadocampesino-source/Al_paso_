@@ -206,6 +206,8 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // Selected closure for Printable Receipt modal
   const [activeReceipt, setActiveReceipt] = useState<DailyClosure | null>(null);
+  // Recibo de precios nuevos para enviar a las sucursales (solo precio de venta).
+  const [showPriceReceipt, setShowPriceReceipt] = useState(false);
 
   // Monthly Calendar & Schedule View States
   const [calendarViewMode, setCalendarViewMode] = useState<"weekly" | "monthly">("monthly");
@@ -2054,6 +2056,29 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   };
 
   /**
+   * Productos cuyo PRECIO DE VENTA cambió respecto al anterior. Es lo único que
+   * se le comunica a las sucursales: ellas no ven costo de compra ni margen.
+   */
+  const productosConPrecioNuevo = products
+    .map((p) => {
+      const edit = matrixEdits[p.Codigo] || {};
+      const ventaNueva =
+        edit.Precio_Venta_Actual !== undefined
+          ? parseFloat(edit.Precio_Venta_Actual) || 0
+          : p.Precio_Venta_Actual || 0;
+      const ventaAnterior = p.Venta_Anterior || p.Precio_Venta_Actual || 0;
+      return {
+        Codigo: p.Codigo,
+        Producto: edit.Producto !== undefined ? edit.Producto : p.Producto,
+        Medida: p.Medida || "Kg",
+        ventaAnterior,
+        ventaNueva,
+      };
+    })
+    .filter((p) => p.ventaNueva > 0 && p.ventaNueva !== p.ventaAnterior)
+    .sort((a, b) => a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" }));
+
+  /**
    * Descarga el Catálogo Maestro en Excel tal como está en pantalla: respeta la
    * búsqueda, los filtros y el orden actuales, y usa las mismas columnas.
    */
@@ -3666,6 +3691,22 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 >
                   <FileSpreadsheet className="w-4 h-4" />
                   Descargar en Excel
+                </button>
+
+                {/* Imagen con los precios de venta que cambiaron, para mandar a las tiendas. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (productosConPrecioNuevo.length === 0) {
+                      setErrorMsg("No hay cambios de precio de venta para enviar hoy.");
+                      return;
+                    }
+                    setShowPriceReceipt(true);
+                  }}
+                  className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
+                >
+                  <Camera className="w-4 h-4" />
+                  Enviar precios nuevos ({productosConPrecioNuevo.length})
                 </button>
               </div>
             </div>
@@ -9368,6 +9409,111 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Descargar Ticket PNG
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* RECIBO DE PRECIOS NUEVOS PARA LAS SUCURSALES
+          Solo lleva el precio de venta: la sucursal no debe conocer el costo de
+          compra ni el porcentaje de ganancia. */}
+      <AnimatePresence>
+        {showPriceReceipt && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl w-full max-w-sm my-8 overflow-hidden shadow-2xl"
+            >
+              {/* Esto es lo que se convierte en imagen */}
+              <div id="recibo-precios" className="bg-white p-6">
+                <div className="text-center border-b-2 border-dashed border-slate-300 pb-4 mb-4">
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">AL PASO</h3>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+                    Mercado Campesino
+                  </p>
+                  <div className="mt-3 inline-block bg-violet-100 text-violet-900 px-3 py-1 rounded-full">
+                    <p className="text-[11px] font-black uppercase tracking-wide">Precios de venta actualizados</p>
+                  </div>
+                  <p className="text-[11px] font-bold text-slate-600 mt-2">{matrixDate}</p>
+                </div>
+
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-[9px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-200">
+                      <th className="pb-1.5">Producto</th>
+                      <th className="pb-1.5 text-right">Antes</th>
+                      <th className="pb-1.5 text-right">Ahora</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productosConPrecioNuevo.map((p) => {
+                      const subio = p.ventaNueva > p.ventaAnterior;
+                      return (
+                        <tr key={p.Codigo} className="border-b border-slate-100">
+                          <td className="py-1.5 pr-2">
+                            <span className="font-bold text-slate-800 text-[12px] leading-tight block">
+                              {p.Producto}
+                            </span>
+                            <span className="text-[9px] text-slate-400 font-semibold">{p.Medida}</span>
+                          </td>
+                          <td className="py-1.5 text-right text-slate-400 line-through font-semibold text-[11px] whitespace-nowrap">
+                            {cop(p.ventaAnterior)}
+                          </td>
+                          <td
+                            className={`py-1.5 text-right font-black text-[13px] whitespace-nowrap ${
+                              subio ? "text-rose-600" : "text-emerald-600"
+                            }`}
+                          >
+                            {cop(p.ventaNueva)}
+                            <span className="ml-0.5 text-[9px]">{subio ? "▲" : "▼"}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <div className="border-t-2 border-dashed border-slate-300 mt-4 pt-3 text-center">
+                  <p className="text-[11px] font-black text-slate-700">
+                    {productosConPrecioNuevo.length} producto(s) con precio nuevo
+                  </p>
+                  <p className="text-[9px] text-slate-400 font-semibold mt-1">
+                    Estos son los precios de venta al público. Aplican desde hoy.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t border-slate-100 space-y-2">
+                <button
+                  onClick={async () => {
+                    const node = document.getElementById("recibo-precios");
+                    if (!node) return;
+                    try {
+                      const dataUrl = await toPng(node, { backgroundColor: "#ffffff", pixelRatio: 2 });
+                      const link = document.createElement("a");
+                      link.download = `Precios_Nuevos_${matrixDate}.png`;
+                      link.href = dataUrl;
+                      link.click();
+                      setSuccessMsg("Imagen de precios descargada. Ya puedes enviarla por WhatsApp.");
+                    } catch (error) {
+                      console.error("Error generando la imagen de precios:", error);
+                      setErrorMsg("No se pudo generar la imagen. Intenta de nuevo.");
+                    }
+                  }}
+                  className="w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-black rounded-xl flex justify-center items-center gap-1.5 cursor-pointer transition shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Descargar imagen para enviar
+                </button>
+                <button
+                  onClick={() => setShowPriceReceipt(false)}
+                  className="w-full py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-extrabold rounded-xl cursor-pointer transition"
+                >
+                  Cerrar
                 </button>
               </div>
             </motion.div>
