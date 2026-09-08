@@ -2056,27 +2056,42 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   };
 
   /**
-   * Productos cuyo PRECIO DE VENTA cambió respecto al anterior. Es lo único que
-   * se le comunica a las sucursales: ellas no ven costo de compra ni margen.
+   * Productos cuyo PRECIO DE VENTA cambió en la fecha seleccionada.
+   *
+   * Se toma del historial de precios (que lleva fecha) y no de comparar contra
+   * Venta_Anterior: ese campo arrastra diferencias antiguas y daba 115 productos,
+   * una imagen ilegible. Si un producto se ajustó varias veces el mismo día, se
+   * muestra el primer precio del día contra el último.
+   *
+   * Solo lleva precio de venta: la sucursal no ve costo de compra ni margen.
    */
-  const productosConPrecioNuevo = products
-    .map((p) => {
-      const edit = matrixEdits[p.Codigo] || {};
-      const ventaNueva =
-        edit.Precio_Venta_Actual !== undefined
-          ? parseFloat(edit.Precio_Venta_Actual) || 0
-          : p.Precio_Venta_Actual || 0;
-      const ventaAnterior = p.Venta_Anterior || p.Precio_Venta_Actual || 0;
-      return {
-        Codigo: p.Codigo,
-        Producto: edit.Producto !== undefined ? edit.Producto : p.Producto,
-        Medida: p.Medida || "Kg",
-        ventaAnterior,
+  const productosConPrecioNuevo = (() => {
+    const porCodigo = new Map<string, { Producto: string; ventaAnterior: number; ventaNueva: number }>();
+
+    for (const h of priceHistory) {
+      if (!h?.Fecha_Hora || !h.Fecha_Hora.startsWith(matrixDate)) continue;
+      const ventaAnterior = h.Venta_Anterior ?? 0;
+      const ventaNueva = h.Venta_Nueva ?? 0;
+      if (ventaNueva <= 0 || ventaNueva === ventaAnterior) continue;
+
+      const previo = porCodigo.get(h.Codigo);
+      porCodigo.set(h.Codigo, {
+        Producto: h.Producto,
+        // Se conserva el precio con el que amaneció el día.
+        ventaAnterior: previo ? previo.ventaAnterior : ventaAnterior,
         ventaNueva,
-      };
-    })
-    .filter((p) => p.ventaNueva > 0 && p.ventaNueva !== p.ventaAnterior)
-    .sort((a, b) => a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" }));
+      });
+    }
+
+    return Array.from(porCodigo.entries())
+      .map(([Codigo, v]) => {
+        const prod = products.find((p) => p.Codigo === Codigo);
+        return { Codigo, Medida: prod?.Medida || "Kg", ...v };
+      })
+      // Un ajuste que va y vuelve al mismo valor no es noticia para la tienda.
+      .filter((p) => p.ventaNueva !== p.ventaAnterior)
+      .sort((a, b) => a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" }));
+  })();
 
   /**
    * Descarga el Catálogo Maestro en Excel tal como está en pantalla: respeta la
@@ -9428,7 +9443,9 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
               exit={{ scale: 0.95, opacity: 0 }}
               className="bg-white rounded-3xl w-full max-w-sm my-8 overflow-hidden shadow-2xl"
             >
-              {/* Esto es lo que se convierte en imagen */}
+              {/* La vista previa se desplaza para no romper la pantalla; la imagen
+                  se genera del nodo completo, así que sale entero igual. */}
+              <div className="max-h-[65vh] overflow-y-auto">
               <div id="recibo-precios" className="bg-white p-6">
                 <div className="text-center border-b-2 border-dashed border-slate-300 pb-4 mb-4">
                   <h3 className="text-xl font-black text-slate-900 tracking-tight">AL PASO</h3>
@@ -9485,6 +9502,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                     Estos son los precios de venta al público. Aplican desde hoy.
                   </p>
                 </div>
+              </div>
               </div>
 
               <div className="p-4 bg-slate-50 border-t border-slate-100 space-y-2">
