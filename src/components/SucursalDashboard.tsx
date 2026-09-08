@@ -143,6 +143,7 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   };
 
   // Cierre Form State
+  const [borradorRecuperado, setBorradorRecuperado] = useState(false);
   const [cashOnHand, setCashOnHand] = useState("");
   const [collectedBy, setCollectedBy] = useState("Hamilton");
   const [expenses, setExpenses] = useState<Array<{ value: string; desc: string }>>([
@@ -638,6 +639,67 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   };
 
   // Submit Daily Closure (Cierre)
+  // ──────────────────────────────────────────────
+  // RESPALDO DEL CIERRE EN CURSO
+  //
+  // Lo que se escribe en el cierre (dinero contado, gastos, quién recoge) vivía
+  // solo en memoria: si se iba la luz o se cerraba el navegador, se perdía todo
+  // y había que contar la caja de nuevo. Ahora se guarda en el propio equipo
+  // mientras se escribe, y se recupera al volver a entrar.
+  //
+  // El borrador es por sucursal y por día: el de ayer no reaparece hoy.
+  // ──────────────────────────────────────────────
+  const claveBorradorCierre = `alpaso_cierre_borrador_${branchName}_${getColombiaDate()}`;
+
+  const borrarBorradorCierre = () => {
+    try {
+      localStorage.removeItem(claveBorradorCierre);
+      setBorradorRecuperado(false);
+    } catch {
+      /* almacenamiento bloqueado: no hay nada que borrar */
+    }
+  };
+
+  // Recupera el borrador del día al abrir la pestaña de cierre.
+  useEffect(() => {
+    if (activeTab !== "cierre") return;
+    try {
+      const guardado = localStorage.getItem(claveBorradorCierre);
+      if (!guardado) return;
+      const b = JSON.parse(guardado);
+      // Solo se restaura si el formulario está vacío, para no pisar lo que
+      // la persona esté escribiendo en este momento.
+      if (cashOnHand || closurePhoto) return;
+      if (b.cashOnHand) setCashOnHand(b.cashOnHand);
+      if (b.collectedBy) setCollectedBy(b.collectedBy);
+      if (Array.isArray(b.expenses) && b.expenses.length > 0) setExpenses(b.expenses);
+      setBorradorRecuperado(true);
+    } catch {
+      /* borrador ilegible: se ignora y se empieza en blanco */
+    }
+    // Solo al entrar a la pestaña; no se re-ejecuta con cada tecla.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, branchName]);
+
+  // Guarda el borrador mientras se escribe.
+  useEffect(() => {
+    if (activeTab !== "cierre") return;
+    const hayAlgo = cashOnHand.trim() !== "" || expenses.some((e) => e.value || e.desc);
+    try {
+      if (hayAlgo) {
+        localStorage.setItem(
+          claveBorradorCierre,
+          JSON.stringify({ cashOnHand, collectedBy, expenses, guardadoEn: new Date().toISOString() })
+        );
+      } else {
+        localStorage.removeItem(claveBorradorCierre);
+      }
+    } catch {
+      /* almacenamiento lleno o bloqueado: el cierre sigue funcionando igual */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashOnHand, collectedBy, expenses, activeTab]);
+
   const handleSubmitCierre = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!collectedBy) {
@@ -691,6 +753,8 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
         setCollectedBy("Hamilton");
         setExpenses([{ value: "", desc: "" }]);
         setClosurePhoto(null);
+        // El cierre ya quedó en el servidor: el borrador local deja de hacer falta.
+        borrarBorradorCierre();
         fetchWallet();
       } else {
         const data = await res.json();
@@ -1469,7 +1533,75 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
               <h3 className="text-lg font-bold text-slate-800 mb-2">Cierre de Caja Diario</h3>
-              <p className="text-slate-400 text-xs mb-6">Guarde las ventas finales del día y registre las salidas/gastos de caja.</p>
+              <p className="text-slate-400 text-xs mb-4">Guarde las ventas finales del día y registre las salidas/gastos de caja.</p>
+
+              {/* Aviso de que se recuperó lo escrito antes de un corte de luz o cierre del navegador. */}
+              {borradorRecuperado && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2">
+                  <RefreshCw className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-[11px] font-extrabold text-amber-900">Se recuperó lo que había escrito</p>
+                    <p className="text-[10px] text-amber-700 font-semibold mt-0.5">
+                      Este cierre quedó a medias (se cerró la app o se fue la luz). Revise los valores antes de enviarlo.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCashOnHand("");
+                      setExpenses([{ value: "", desc: "" }]);
+                      borrarBorradorCierre();
+                    }}
+                    className="shrink-0 px-2 py-1 bg-white border border-amber-200 hover:bg-amber-100 text-amber-800 text-[10px] font-extrabold rounded-lg cursor-pointer transition"
+                  >
+                    Empezar de nuevo
+                  </button>
+                </div>
+              )}
+
+              {/* Mermas ya registradas hoy: se ven sin tener que hacer el cierre.
+                  Están guardadas en el servidor, así que un corte de luz no las borra. */}
+              {(() => {
+                const hoy = getColombiaDate();
+                const mermasHoy = mermaHistory.filter((m) => m.Fecha === hoy);
+                const perdidaHoy = mermasHoy.reduce((s, m) => s + (m.Perdida_Monetaria || 0), 0);
+                return (
+                  <div className="mb-6 p-4 bg-rose-50/60 border border-rose-100 rounded-2xl">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[11px] font-extrabold text-rose-900 uppercase tracking-wide">
+                        Mermas registradas hoy
+                      </span>
+                      <span className="text-sm font-black text-rose-700 font-mono">{cop(perdidaHoy)}</span>
+                    </div>
+
+                    {mermasHoy.length === 0 ? (
+                      <p className="text-[10px] text-rose-400 font-semibold italic">
+                        Aún no se ha registrado ninguna merma hoy.
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {mermasHoy.map((m, i) => (
+                          <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-bold text-slate-700 truncate">
+                              {m.Producto}{" "}
+                              <span className="text-slate-400 font-semibold">
+                                ({m.Cantidad} {m.Unidad || "Kg"})
+                              </span>
+                            </span>
+                            <span className="font-black text-rose-600 whitespace-nowrap">
+                              {cop(m.Perdida_Monetaria)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <p className="text-[9px] text-rose-400/80 font-semibold mt-2 leading-tight">
+                      Ya están guardadas y viajan con el cierre. No hay que volverlas a escribir.
+                    </p>
+                  </div>
+                );
+              })()}
 
               <form onSubmit={handleSubmitCierre} className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
