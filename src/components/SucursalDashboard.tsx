@@ -1641,20 +1641,29 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                   </div>
                 </div>
 
-                <div>
+                {/* Lista de gastos del día. Se puede ir llenando durante la jornada,
+                    sin cerrar la caja: cada renglón queda guardado en el equipo
+                    apenas se escribe y aparece aquí al volver. */}
+                <div className="border-2 border-slate-200 rounded-2xl p-4 bg-slate-50/60">
                   <div className="flex justify-between items-center mb-2">
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                      🧾 Gastos Extra / Salidas de Caja
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                      🧾 Gastos del día / Salidas de Caja
                     </label>
                     <button
                       type="button"
                       onClick={addExpenseRow}
-                      className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center gap-1 font-bold cursor-pointer"
+                      className="px-2.5 py-1 text-xs bg-slate-900 hover:bg-slate-800 text-white rounded-lg flex items-center gap-1 font-bold cursor-pointer"
                     >
                       <Plus className="w-3 h-3" /> Añadir Gasto
                     </button>
                   </div>
-                  <p className="text-slate-400 text-[10px] mb-3">Registros menores pagados en efectivo directo de caja.</p>
+                  <p className="text-slate-500 text-[10px] mb-1">
+                    Anote cada salida de efectivo <strong>apenas ocurra</strong>, sin esperar al cierre.
+                  </p>
+                  <p className="text-emerald-600 text-[10px] font-bold mb-3 flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    Se guarda solo en este equipo: si se va la luz, la lista sigue aquí.
+                  </p>
 
                   <div className="space-y-3">
                     {expenses.map((exp, idx) => (
@@ -1685,6 +1694,23 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                       </div>
                     ))}
                   </div>
+
+                  {/* Total acumulado de lo anotado hasta ahora. */}
+                  {(() => {
+                    const anotados = expenses.filter((e) => e.value || e.desc);
+                    const totalGastos = expenses.reduce(
+                      (s, e) => s + (parseFloat(String(e.value).replace(/\D/g, "")) || 0),
+                      0
+                    );
+                    return (
+                      <div className="mt-3 pt-3 border-t-2 border-dashed border-slate-300 flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-500">
+                          {anotados.length} gasto(s) anotado(s) hoy
+                        </span>
+                        <span className="text-base font-black text-rose-600 font-mono">{cop(totalGastos)}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Subir foto de comprobante/pagos */}
