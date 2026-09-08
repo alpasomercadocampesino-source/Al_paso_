@@ -3212,9 +3212,16 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
             </div>
             <div>
               <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
-                Cris <span className="text-xs bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full font-extrabold uppercase">Admin Master</span>
+                {adminName}{" "}
+                <span className="text-xs bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full font-extrabold uppercase">
+                  {esAdminDeUnaSucursal ? sucursalAsignada : "Admin Master"}
+                </span>
               </h2>
-              <p className="text-slate-400 text-xs mt-0.5">Control Central y Configuración de Al Paso.</p>
+              <p className="text-slate-400 text-xs mt-0.5">
+                {esAdminDeUnaSucursal
+                  ? `Administración de la sucursal ${sucursalAsignada}.`
+                  : "Control Central y Configuración de Al Paso."}
+              </p>
             </div>
           </div>
 
@@ -3433,9 +3440,22 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
             {/* Quick Admin instructions */}
             <div className="p-6 bg-slate-900 text-white rounded-3xl border border-slate-800/80 shadow-md">
-              <h3 className="text-lg font-extrabold text-emerald-400 mb-2">💡 Consola Unificada de Cris</h3>
+              <h3 className="text-lg font-extrabold text-emerald-400 mb-2">💡 Consola Unificada de {adminName}</h3>
               <p className="text-slate-400 text-sm leading-relaxed mb-4">
-                Como administradora principal, usted posee privilegios totales sobre la plataforma Al Paso. Puede utilizar las pestañas de navegación superiores para saltar entre el Catálogo Maestro de precios, simular una venta/pedido en cualquiera de las 5 sucursales (Nobsa, Tibasosa, Fira, Aquitania, Hansel), o revisar la planilla de compras y nómina del Comprador.
+                {esAdminDeUnaSucursal ? (
+                  <>
+                    Usted administra la sucursal <strong className="text-white">{sucursalAsignada}</strong>. Desde las
+                    pestañas superiores puede registrar y revisar sus pedidos, cierres de caja, mermas, monedero y
+                    personal. La información de las demás sucursales no forma parte de su panel.
+                  </>
+                ) : (
+                  <>
+                    Como administradora principal, usted posee privilegios totales sobre la plataforma Al Paso. Puede
+                    utilizar las pestañas de navegación superiores para saltar entre el Catálogo Maestro de precios,
+                    simular una venta/pedido en cualquiera de sus sucursales ({sucursalesPermitidas.join(", ")}), o
+                    revisar la planilla de compras y nómina del Comprador.
+                  </>
+                )}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-800">
                 <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
