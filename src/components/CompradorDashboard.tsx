@@ -41,6 +41,17 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   // Extra features for orders & history
   const [allOrderDates, setAllOrderDates] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"consolidated" | "by_branch" | "by_provider">("consolidated");
+  // Orden del listado de pedidos por sucursal (mismo comportamiento que el catálogo).
+  const [sucSortField, setSucSortField] = useState<string>("Codigo");
+  const [sucSortDir, setSucSortDir] = useState<"asc" | "desc">("asc");
+  const toggleSucSort = (campo: string) => {
+    if (sucSortField === campo) {
+      setSucSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSucSortField(campo);
+      setSucSortDir("asc");
+    }
+  };
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvInputText, setCsvInputText] = useState("");
   const [csvInputDate, setCsvInputDate] = useState(getColombiaDate());
@@ -2245,6 +2256,20 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                       const branchItems = plazaMatrixData.filter((row) => {
                         const bVal = row[branchName];
                         return parseQty(bVal) > 0;
+                      }).sort((a, b) => {
+                        let cmp = 0;
+                        if (sucSortField === "Producto") {
+                          cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
+                        } else if (sucSortField === "Cantidad") {
+                          cmp = parseQty(a[branchName]) - parseQty(b[branchName]);
+                        } else if (sucSortField === "Precio_Compra") {
+                          cmp = a.Precio_Compra - b.Precio_Compra;
+                        } else if (sucSortField === "Total") {
+                          cmp = parseQty(a[branchName]) * a.Precio_Compra - parseQty(b[branchName]) * b.Precio_Compra;
+                        } else {
+                          cmp = a.Codigo.localeCompare(b.Codigo, undefined, { numeric: true });
+                        }
+                        return sucSortDir === "asc" ? cmp : -cmp;
                       });
 
                       const branchSubtotal = branchItems.reduce((acc, row) => {
@@ -2272,12 +2297,31 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                             <div className="overflow-x-auto">
                               <table className="w-full text-left text-xs whitespace-nowrap">
                                 <thead>
-                                  <tr className="text-slate-400 font-bold border-b border-slate-200 text-[9px] uppercase tracking-wider">
-                                    <th className="pb-2">Cód</th>
-                                    <th className="pb-2">Producto</th>
-                                    <th className="pb-2 text-center w-14">Cant</th>
-                                    <th className="pb-2 text-right">Costo Unit</th>
-                                    <th className="pb-2 text-right">Total</th>
+                                  <tr className="text-slate-400 font-bold border-b border-slate-200 text-[9px] uppercase tracking-wider select-none">
+                                    {/* Encabezados ordenables, igual que en el Catálogo Maestro. */}
+                                    {[
+                                      { campo: "Codigo", etiqueta: "Cód", clase: "pb-2" },
+                                      { campo: "Producto", etiqueta: "Producto", clase: "pb-2" },
+                                      { campo: "Cantidad", etiqueta: "Cant", clase: "pb-2 text-center w-14" },
+                                      { campo: "Precio_Compra", etiqueta: "Costo Unit", clase: "pb-2 text-right" },
+                                      { campo: "Total", etiqueta: "Total", clase: "pb-2 text-right" },
+                                    ].map((col) => (
+                                      <th
+                                        key={col.campo}
+                                        onClick={() => toggleSucSort(col.campo)}
+                                        title="Clic para ordenar"
+                                        className={`${col.clase} cursor-pointer hover:text-slate-600 transition`}
+                                      >
+                                        <span className="inline-flex items-center gap-0.5">
+                                          {col.etiqueta}
+                                          {sucSortField === col.campo
+                                            ? (sucSortDir === "asc"
+                                                ? <ArrowUp className="w-2.5 h-2.5 text-emerald-600" />
+                                                : <ArrowDown className="w-2.5 h-2.5 text-emerald-600" />)
+                                            : <ArrowUpDown className="w-2.5 h-2.5 text-slate-300" />}
+                                        </span>
+                                      </th>
+                                    ))}
                                     <th className="pb-2 pl-4">Obs Sede</th>
                                   </tr>
                                 </thead>
