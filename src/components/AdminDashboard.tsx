@@ -131,7 +131,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     return () => { vivo = false; };
   }, [sucursalAsignada]);
   const [adminMode, setAdminMode] = useState<
-    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas"
+    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas" | "precios_nuevos"
   >("master");
 
   // Sync Logs state
@@ -3534,6 +3534,21 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
 
 
+
+            <button
+              onClick={() => setAdminMode("precios_nuevos")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                adminMode === "precios_nuevos" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-violet-300" />
+              Precios Nuevos
+              {productosConPrecioNuevo.length > 0 && (
+                <span className="px-1.5 py-0.5 bg-violet-500 text-white text-[9px] font-black rounded-full">
+                  {productosConPrecioNuevo.length}
+                </span>
+              )}
+            </button>
 
             <button
               onClick={() => setAdminMode("mermas")}
@@ -8724,6 +8739,121 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* PRECIOS NUEVOS: recibo para enviar a las sucursales.
+            Solo lleva precio de venta — la sucursal no ve costo ni margen. */}
+        {adminMode === "precios_nuevos" && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">Precios Nuevos para las Sucursales</h3>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Productos cuyo precio de venta cambió en la fecha elegida. Genere la imagen y envíela por WhatsApp.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">Fecha</label>
+                    <input
+                      type="date"
+                      value={matrixDate}
+                      onChange={(e) => setMatrixDate(e.target.value)}
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (productosConPrecioNuevo.length === 0) {
+                        setErrorMsg("No hay cambios de precio de venta en esa fecha.");
+                        return;
+                      }
+                      setShowPriceReceipt(true);
+                    }}
+                    className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Generar imagen para enviar
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 p-4 bg-violet-50/60 border border-violet-100 rounded-2xl flex items-center gap-3">
+                <div className="p-2 bg-violet-600 text-white rounded-xl">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <p className="text-[11px] text-violet-900 font-semibold leading-snug">
+                  El recibo muestra <strong>únicamente el precio de venta al público</strong>. No incluye el costo de
+                  compra ni el porcentaje de ganancia, así que puede enviarse a las tiendas sin reservas.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
+              {productosConPrecioNuevo.length === 0 ? (
+                <div className="text-center py-16">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                  <p className="text-slate-800 font-bold text-sm">No hay precios nuevos en esta fecha</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Cuando cambie precios de venta en el Catálogo Maestro, aparecerán aquí para enviarlos.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-black text-slate-800">
+                      {productosConPrecioNuevo.length} producto(s) con precio nuevo
+                    </h4>
+                    <div className="flex items-center gap-3 text-[10px] font-bold">
+                      <span className="text-rose-600">
+                        ▲ {productosConPrecioNuevo.filter((p) => p.ventaNueva > p.ventaAnterior).length} subieron
+                      </span>
+                      <span className="text-emerald-600">
+                        ▼ {productosConPrecioNuevo.filter((p) => p.ventaNueva < p.ventaAnterior).length} bajaron
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-black uppercase tracking-wider text-[10px]">
+                          <th className="py-3 px-2">Producto</th>
+                          <th className="py-3 px-2">Unidad</th>
+                          <th className="py-3 px-2 text-right">Precio anterior</th>
+                          <th className="py-3 px-2 text-right">Precio nuevo</th>
+                          <th className="py-3 px-2 text-right">Diferencia</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {productosConPrecioNuevo.map((p) => {
+                          const subio = p.ventaNueva > p.ventaAnterior;
+                          const dif = p.ventaNueva - p.ventaAnterior;
+                          return (
+                            <tr key={p.Codigo} className="border-b border-slate-50 hover:bg-slate-50/60 transition">
+                              <td className="py-2 px-2 font-bold text-slate-800">{p.Producto}</td>
+                              <td className="py-2 px-2 text-slate-400 font-semibold">{p.Medida}</td>
+                              <td className="py-2 px-2 text-right font-mono text-slate-400 line-through">
+                                {cop(p.ventaAnterior)}
+                              </td>
+                              <td className={`py-2 px-2 text-right font-mono font-black ${subio ? "text-rose-600" : "text-emerald-600"}`}>
+                                {cop(p.ventaNueva)}
+                              </td>
+                              <td className={`py-2 px-2 text-right font-mono font-bold ${subio ? "text-rose-500" : "text-emerald-500"}`}>
+                                {subio ? "▲ +" : "▼ "}{cop(Math.abs(dif))}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
