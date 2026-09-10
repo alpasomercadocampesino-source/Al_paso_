@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import {
   ShoppingBag, Trash2, Send, Save, CreditCard, ClipboardCheck,
-  Plus, Search, Info, AlertTriangle, CheckSquare, Square, Check, RefreshCw, Calculator, Camera, Image as ImageIcon
+  Plus, Search, Info, AlertTriangle, CheckSquare, Square, Check, RefreshCw, Calculator, Camera, Image as ImageIcon,
+  ArrowUp, ArrowDown, ArrowUpDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Product, Order, Shrinkage } from "../types";
@@ -73,6 +74,18 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   const [previousOrderItems, setPreviousOrderItems] = useState<{ [code: string]: string }>({});
   // Orden del historial de mermas: por defecto de la más reciente a la más antigua.
   const [ordenMermas, setOrdenMermas] = useState<"reciente" | "antiguo">("reciente");
+  // Orden del catálogo de productos. Por defecto alfabético por producto, que es
+  // como se busca al armar el pedido.
+  const [catSortField, setCatSortField] = useState<string>("Producto");
+  const [catSortDir, setCatSortDir] = useState<"asc" | "desc">("asc");
+  const toggleCatSort = (campo: string) => {
+    if (catSortField === campo) {
+      setCatSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setCatSortField(campo);
+      setCatSortDir("asc");
+    }
+  };
 
   // Merma Form State
   const [mermaProd, setMermaProd] = useState("");
@@ -852,7 +865,24 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   const filteredProducts = products.filter((p) =>
     p.Producto.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.Codigo.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ).sort((a, b) => {
+    let cmp = 0;
+    if (catSortField === "Producto") {
+      // localeCompare con sensitivity base: la Ñ y los acentos quedan donde
+      // uno los busca, no al final de la lista.
+      cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
+    } else if (catSortField === "Medida") {
+      cmp = (a.Medida || "").localeCompare(b.Medida || "", "es", { sensitivity: "base" });
+    } else if (catSortField === "Anterior") {
+      cmp = parseQty(previousOrderItems[a.Codigo] || "0") - parseQty(previousOrderItems[b.Codigo] || "0");
+    } else if (catSortField === "Cantidad") {
+      // Lo que ya se escribió en el pedido de hoy.
+      cmp = parseQty(draft[a.Codigo]?.qty || "0") - parseQty(draft[b.Codigo]?.qty || "0");
+    } else {
+      cmp = a.Codigo.localeCompare(b.Codigo, undefined, { numeric: true });
+    }
+    return catSortDir === "asc" ? cmp : -cmp;
+  });
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 md:px-6 py-6 min-h-[calc(100vh-80px)]">
@@ -1007,12 +1037,30 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
               <div className="overflow-x-auto max-h-[500px]">
                 <table className="w-full text-left text-sm border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-100 text-slate-400 font-bold">
-                      <th className="py-3 px-2">Código</th>
-                      <th className="py-3 px-2">Producto</th>
-                      <th className="py-3 px-2">Unidad</th>
-                      <th className="py-3 px-2 text-center">Pedido Anterior</th>
-                      <th className="py-3 px-2 w-28 text-center">Cantidad</th>
+                    <tr className="border-b border-slate-100 text-slate-400 font-bold select-none">
+                      {[
+                        { campo: "Codigo", etiqueta: "Código", clase: "py-3 px-2" },
+                        { campo: "Producto", etiqueta: "Producto", clase: "py-3 px-2" },
+                        { campo: "Medida", etiqueta: "Unidad", clase: "py-3 px-2" },
+                        { campo: "Anterior", etiqueta: "Pedido Anterior", clase: "py-3 px-2 text-center" },
+                        { campo: "Cantidad", etiqueta: "Cantidad", clase: "py-3 px-2 w-28 text-center" },
+                      ].map((col) => (
+                        <th
+                          key={col.campo}
+                          onClick={() => toggleCatSort(col.campo)}
+                          title="Clic para ordenar"
+                          className={`${col.clase} cursor-pointer hover:text-slate-600 transition`}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            {col.etiqueta}
+                            {catSortField === col.campo
+                              ? (catSortDir === "asc"
+                                  ? <ArrowUp className="w-3 h-3 text-emerald-600" />
+                                  : <ArrowDown className="w-3 h-3 text-emerald-600" />)
+                              : <ArrowUpDown className="w-3 h-3 text-slate-300" />}
+                          </span>
+                        </th>
+                      ))}
                       <th className="py-3 px-2">Notas / Observaciones</th>
                     </tr>
                   </thead>
