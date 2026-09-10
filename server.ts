@@ -1428,11 +1428,23 @@ app.get("/api/payroll/data", (req, res) => {
 
   let rates = db.rates || [];
   if (req.auth?.r === "AdminSucursal" || req.auth?.r === "Sucursal") {
+    // Un empleado se ve si pertenece a la sucursal, o si ya tiene movimiento en
+    // ella. Lo primero es lo que permite dar de alta a alguien y verlo de
+    // inmediato: antes solo aparecía después de asignarle un turno, así que un
+    // empleado recién creado quedaba invisible para su propio administrador.
     const empleadosVisibles = new Set<string>();
     for (const s of schedules) empleadosVisibles.add(norm(s.Empleado));
     for (const l of loans) empleadosVisibles.add(norm(l.Empleado));
     for (const p of payroll) empleadosVisibles.add(norm(p.Trabajador));
-    rates = rates.filter((r) => r && empleadosVisibles.has(norm(r.Empleado)));
+    rates = rates.filter(
+      (r) => r && (puedeVerSucursal(req, r.Sucursal) || empleadosVisibles.has(norm(r.Empleado)))
+    );
+  } else if (req.auth?.r === "Admin") {
+    // El aislamiento va en los dos sentidos: el personal propio de una sucursal
+    // con administrador no aparece en la nómina del administrador general.
+    // Los empleados sin sucursal asignada son del negocio y los sigue viendo.
+    const privadas = sucursalesConAdminPropio();
+    rates = rates.filter((r) => !r?.Sucursal || !privadas.has(norm(r.Sucursal)));
   }
 
   res.json({ schedules, loans, rates, payroll });
@@ -1447,8 +1459,18 @@ app.post("/api/payroll/rates", async (req, res) => {
   if (exists) {
     return res.status(400).json({ error: "Ya existe un empleado con ese nombre" });
   }
+  // Un administrador de sucursal solo puede dar de alta personal suyo, y queda
+  // asignado a su sucursal para que lo vea de inmediato sin asignarle turnos.
+  const sucursalDelEmpleado =
+    req.auth?.r === "AdminSucursal" ? req.auth.s : (req.body.Sucursal || undefined);
+
+  if (sucursalDelEmpleado && !puedeVerSucursal(req, sucursalDelEmpleado)) {
+    return res.status(403).json({ error: "No puedes crear personal en esta sucursal." });
+  }
+
   const newRate = {
     Empleado,
+    Sucursal: sucursalDelEmpleado,
     Valor_Dia: Math.round(parseFloat(Valor_Dia) || 60000),
     Valor_Hora: Math.round(parseFloat(Valor_Hora) || 9000),
     Auxilio_Transporte: Math.round(parseFloat(Auxilio_Transporte) || 8303),
@@ -1457,7 +1479,7 @@ app.post("/api/payroll/rates", async (req, res) => {
   };
   db.rates.push(newRate);
   await saveDb(db, ["rates"]);
-  res.status(210).json(newRate);
+  res.status(200).json(newRate);
 });
 
 app.put("/api/payroll/rates/:name", async (req, res) => {

@@ -191,6 +191,8 @@ export const employeeRates = pgTable("employee_rates", {
   id: serial("id").primaryKey(),
   clientId: text("client_id").notNull().unique(),
   empleado: text("empleado").notNull().unique(),
+  // Sucursal a la que pertenece. NULL = empleado general (p. ej. el comprador).
+  sucursal: text("sucursal"),
   valorDia: doublePrecision("valor_dia").default(0),
   valorHora: doublePrecision("valor_hora").default(0),
   auxilioTransporte: doublePrecision("auxilio_transporte").default(0),

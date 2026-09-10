@@ -358,38 +358,15 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     [employee: string]: {
       [day: string]: { sucursal: string; horas: number; extras: number }
     }
-  }>({
-    "Hamilton": {
-      "LUNES": { sucursal: "Plaza", horas: 8, extras: 2 },
-      "MARTES": { sucursal: "Plaza", horas: 8, extras: 1 },
-      "MIERCOLES": { sucursal: "Plaza", horas: 8, extras: 0 },
-      "JUEVES": { sucursal: "Plaza", horas: 8, extras: 3 },
-      "VIERNES": { sucursal: "Plaza", horas: 8, extras: 0 },
-      "SABADO": { sucursal: "Plaza", horas: 8, extras: 2 },
-      "DOMINGO": { sucursal: "Descanso", horas: 0, extras: 0 }
-    },
-    "Nelson": {
-      "LUNES": { sucursal: "Nobsa", horas: 8, extras: 0 },
-      "MARTES": { sucursal: "Tibasosa", horas: 8, extras: 2 },
-      "MIERCOLES": { sucursal: "Fira", horas: 8, extras: 0 },
-      "JUEVES": { sucursal: "Nobsa", horas: 8, extras: 1 },
-      "VIERNES": { sucursal: "Tibasosa", horas: 8, extras: 0 },
-      "SABADO": { sucursal: "Fira", horas: 8, extras: 4 },
-      "DOMINGO": { sucursal: "Descanso", horas: 0, extras: 0 }
-    },
-    "Felipe": {
-      "LUNES": { sucursal: "Fira", horas: 8, extras: 0 },
-      "MARTES": { sucursal: "Nobsa", horas: 8, extras: 0 },
-      "MIERCOLES": { sucursal: "Tibasosa", horas: 8, extras: 2 },
-      "JUEVES": { sucursal: "Fira", horas: 8, extras: 0 },
-      "VIERNES": { sucursal: "Nobsa", horas: 8, extras: 1 },
-      "SABADO": { sucursal: "Tibasosa", horas: 8, extras: 2 },
-      "DOMINGO": { sucursal: "Descanso", horas: 0, extras: 0 }
-    }
-  });
+  }>({});
+  // Antes esto arrancaba con un horario de demostración (Hamilton, Nelson,
+  // Felipe en sucursales inventadas). Se mostraba a cualquiera que abriera la
+  // nómina, incluida una administradora de sucursal a la que esa gente no le
+  // corresponde, y "Nelson" y "Felipe" ni siquiera existen como empleados.
+  // El horario se arma ahora con el personal real que devuelve el servidor.
 
   // Individual payroll selection & loan registry states
-  const [selectedPayrollEmployee, setSelectedPayrollEmployee] = useState<string>("Hamilton");
+  const [selectedPayrollEmployee, setSelectedPayrollEmployee] = useState<string>("");
   const [payrollPeriod, setPayrollPeriod] = useState<"Semanal" | "Mensual">("Mensual");
   const [payrollCalculationBase, setPayrollCalculationBase] = useState<"Teorico" | "Calendario">("Calendario");
 
@@ -556,7 +533,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       if (res.ok) {
         showEmpFeedback("success", `¡Colaborador "${name}" eliminado exitosamente!`);
         if (selectedPayrollEmployee === name) {
-          setSelectedPayrollEmployee("Hamilton");
+          setSelectedPayrollEmployee("");
         }
         await fetchAdminSubData();
       } else {
@@ -2572,14 +2549,28 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // Smart Payroll Helpers
   const employees = Array.from(new Set(rates.map((r) => r.Empleado))).filter(Boolean);
+
+  // Selecciona el primer empleado real disponible en esta sesión. Cada quien ve
+  // su propio personal, así que no puede haber un nombre fijo por defecto.
+  useEffect(() => {
+    if (employees.length === 0) {
+      if (selectedPayrollEmployee) setSelectedPayrollEmployee("");
+      return;
+    }
+    if (!selectedPayrollEmployee || !employees.includes(selectedPayrollEmployee)) {
+      setSelectedPayrollEmployee(employees[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees.join("|")]);
   const daysOfWeek = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO"];
   const availableStores = ["Descanso", "Plaza", ...sucursalesPermitidas];
 
   const getDailyRate = (emp: string) => {
     const rateObj = rates.find((r) => r.Empleado.toLowerCase() === emp.toLowerCase());
     if (rateObj) return rateObj.Valor_Dia;
-    if (emp === "Hamilton") return 45000;
-    return 40000; // Nelson & Felipe default
+    // Sin tarifa registrada no se inventa un valor: pagar con una cifra
+    // supuesta es peor que mostrar cero y que alguien la configure.
+    return 0;
   };
 
   const getTransportRate = (emp: string) => {

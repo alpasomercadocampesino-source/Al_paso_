@@ -256,6 +256,8 @@ export interface EmployeeLoan {
 
 export interface EmployeeRate {
   Empleado: string;
+  /** Sucursal a la que pertenece. Vacío = empleado general. */
+  Sucursal?: string;
   Valor_Dia: number;
   Valor_Hora: number;
   Auxilio_Transporte?: number;
@@ -1033,7 +1035,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
     } as PackagingMovement, m.clientId)),
     schedules: schedulesRows.map((s) => tagId({ Fecha: s.fecha, Empleado: s.empleado, Sucursal: s.sucursal, Horas_Trabajadas: s.horasTrabajadas ?? 0 } as EmployeeSchedule, s.clientId)),
     loans: loansRows.map((l) => tagId({ Fecha: l.fecha, Empleado: l.empleado, Sucursal: l.sucursal, Monto: l.monto ?? 0, Motivo: l.motivo || "", Estado: (l.estado as any) || "Pendiente" } as EmployeeLoan, l.clientId)),
-    rates: ratesRows.map((r) => tagId({ Empleado: r.empleado, Valor_Dia: r.valorDia ?? 0, Valor_Hora: r.valorHora ?? 0, Auxilio_Transporte: r.auxilioTransporte ?? 0, Celular: r.celular || "", Cedula: r.cedula || "" } as EmployeeRate, r.clientId)),
+    rates: ratesRows.map((r) => tagId({ Empleado: r.empleado, Sucursal: r.sucursal || undefined, Valor_Dia: r.valorDia ?? 0, Valor_Hora: r.valorHora ?? 0, Auxilio_Transporte: r.auxilioTransporte ?? 0, Celular: r.celular || "", Cedula: r.cedula || "" } as EmployeeRate, r.clientId)),
     payroll: payrollRows.map((p) => tagId({
       Fecha: p.fecha, Trabajador: p.trabajador, Sucursal: p.sucursal, Dias_Trabajados: p.diasTrabajados ?? 0, Horas_Trabajadas: p.horasTrabajadas ?? 0,
       Pago_Base: p.pagoBase ?? 0, Pago_Horas: p.pagoHoras ?? 0, Prestamos_Descontados: p.prestamosDescontados ?? 0, Total_Neto: p.totalNeto ?? 0, Estado_Pago: (p.estadoPago as any) || "Pendiente",
@@ -1162,7 +1164,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
   },
   rates: async (db, tx) => {
     await upsertRows(tx, "employee_rates", "client_id", db.rates.map((r) => ({
-      client_id: (r as any)._id, empleado: r.Empleado, valor_dia: r.Valor_Dia, valor_hora: r.Valor_Hora, auxilio_transporte: r.Auxilio_Transporte || 0,
+      client_id: (r as any)._id, empleado: r.Empleado, sucursal: r.Sucursal || null, valor_dia: r.Valor_Dia, valor_hora: r.Valor_Hora, auxilio_transporte: r.Auxilio_Transporte || 0,
       celular: r.Celular || "", cedula: r.Cedula || "",
     })));
   },
