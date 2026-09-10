@@ -871,6 +871,11 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
       // localeCompare con sensitivity base: la Ñ y los acentos quedan donde
       // uno los busca, no al final de la lista.
       cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
+    } else if (catSortField === "Proveedor") {
+      // Agrupa por proveedor; dentro de cada uno, alfabético por producto, que es
+      // como se arma el pedido cuando se piensa "qué le pido a este proveedor".
+      cmp = (a.Proveedor || "").localeCompare(b.Proveedor || "", "es", { sensitivity: "base" });
+      if (cmp === 0) cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
     } else if (catSortField === "Medida") {
       cmp = (a.Medida || "").localeCompare(b.Medida || "", "es", { sensitivity: "base" });
     } else if (catSortField === "Anterior") {
@@ -1034,6 +1039,42 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                 </div>
               </div>
 
+              {/* Selector de orden. Proveedor no es una columna de esta tabla, así
+                  que necesita estar aquí y no en los encabezados. */}
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ordenar por</span>
+                {[
+                  { campo: "Producto", etiqueta: "Producto", icono: "🔤" },
+                  { campo: "Proveedor", etiqueta: "Proveedor", icono: "🏢" },
+                  { campo: "Codigo", etiqueta: "Código", icono: "🔢" },
+                  { campo: "Anterior", etiqueta: "Pedido anterior", icono: "📋" },
+                ].map((op) => {
+                  const activo = catSortField === op.campo;
+                  return (
+                    <button
+                      key={op.campo}
+                      type="button"
+                      onClick={() => toggleCatSort(op.campo)}
+                      title={activo ? "Clic para invertir el orden" : `Ordenar por ${op.etiqueta}`}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                        activo
+                          ? "bg-slate-900 text-white shadow-sm"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span>{op.icono}</span>
+                      {op.etiqueta}
+                      {activo && (
+                        <span className="text-[10px]">
+                          {catSortDir === "asc" ? "▲" : "▼"}
+                          {op.campo === "Producto" && (catSortDir === "asc" ? " A-Z" : " Z-A")}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="overflow-x-auto max-h-[500px]">
                 <table className="w-full text-left text-sm border-collapse">
                   <thead>
@@ -1089,6 +1130,13 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                               <Calculator className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                          {/* El proveedor solo se muestra cuando se ordena por él:
+                              si no, el orden se vería arbitrario en pantalla. */}
+                          {catSortField === "Proveedor" && (
+                            <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">
+                              🏢 {p.Proveedor || "Sin proveedor"}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 px-2 text-xs text-slate-500 font-medium">
                           <div className="flex flex-col">
