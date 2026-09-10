@@ -183,7 +183,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [modalMerma, setModalMerma] = useState("0");
   
   // Branch simulation state
-  const [simBranch, setSimBranch] = useState("Nobsa");
+  const [simBranch, setSimBranch] = useState(sucursalAsignada || "Nobsa");
 
   // Catalog manager state
   const [products, setProducts] = useState<Product[]>([]);
@@ -576,7 +576,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [loanEmp, setLoanEmp] = useState("");
   const [loanAmount, setLoanAmount] = useState("");
   const [loanReason, setLoanReason] = useState("");
-  const [loanBranch, setLoanBranch] = useState("Plaza");
+  const [loanBranch, setLoanBranch] = useState(sucursalAsignada || "Plaza");
 
   const handleSaveLoan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -5825,11 +5825,9 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                               {paSortField === "proveedor" ? (paSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                             </div>
                           </th>
-                          <th className="py-3 px-2 text-right">Tibasosa</th>
-                          <th className="py-3 px-2 text-right">Nobsa</th>
-                          <th className="py-3 px-2 text-right">Fira</th>
-                          <th className="py-3 px-2 text-right">Aquitania</th>
-                          <th className="py-3 px-2 text-right">Hansel</th>
+                          {sucursalesPermitidas.map((b) => (
+                            <th key={b} className="py-3 px-2 text-right">{b}</th>
+                          ))}
                           <th 
                             onClick={() => togglePaSort("totalEstimado")}
                             className="py-3 px-2 text-right bg-slate-100/50 cursor-pointer hover:bg-slate-200 transition"
@@ -5936,21 +5934,11 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                                   )}
                                 </div>
                               </td>
-                              <td className="py-3.5 px-2 text-right font-mono text-slate-600">
-                                {summary.sucursales.Tibasosa?.real > 0 ? cop(summary.sucursales.Tibasosa.real) : "—"}
-                              </td>
-                              <td className="py-3.5 px-2 text-right font-mono text-slate-600">
-                                {summary.sucursales.Nobsa?.real > 0 ? cop(summary.sucursales.Nobsa.real) : "—"}
-                              </td>
-                              <td className="py-3.5 px-2 text-right font-mono text-slate-600">
-                                {summary.sucursales.Fira?.real > 0 ? cop(summary.sucursales.Fira.real) : "—"}
-                              </td>
-                              <td className="py-3.5 px-2 text-right font-mono text-slate-600">
-                                {summary.sucursales.Aquitania?.real > 0 ? cop(summary.sucursales.Aquitania.real) : "—"}
-                              </td>
-                              <td className="py-3.5 px-2 text-right font-mono text-slate-600">
-                                {summary.sucursales.Hansel?.real > 0 ? cop(summary.sucursales.Hansel.real) : "—"}
-                              </td>
+                              {sucursalesPermitidas.map((b) => (
+                                <td key={b} className="py-3.5 px-2 text-right font-mono text-slate-600">
+                                  {summary.sucursales[b]?.real > 0 ? cop(summary.sucursales[b].real) : "—"}
+                                </td>
+                              ))}
                               <td className="py-3.5 px-2 text-right font-mono text-amber-600 bg-slate-100/30">
                                 {summary.totalEstimado > 0 ? cop(summary.totalEstimado) : "—"}
                               </td>
@@ -6383,36 +6371,15 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                                 {prSortField === "proveedor" ? (prSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                               </div>
                             </th>
-                            <th 
-                              onClick={() => togglePrSort("Tibasosa")}
-                              className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
-                            >
-                              Tibasosa
-                            </th>
-                            <th 
-                              onClick={() => togglePrSort("Nobsa")}
-                              className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
-                            >
-                              Nobsa
-                            </th>
-                            <th 
-                              onClick={() => togglePrSort("Fira")}
-                              className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
-                            >
-                              Fira
-                            </th>
-                            <th 
-                              onClick={() => togglePrSort("Aquitania")}
-                              className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
-                            >
-                              Aquitania
-                            </th>
-                            <th 
-                              onClick={() => togglePrSort("Hansel")}
-                              className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
-                            >
-                              Hansel
-                            </th>
+                            {sucursalesPermitidas.map((b) => (
+                              <th
+                                key={b}
+                                onClick={() => togglePrSort(b)}
+                                className="py-3 px-2 text-right cursor-pointer hover:bg-slate-100 transition"
+                              >
+                                {b}
+                              </th>
+                            ))}
                             <th 
                               onClick={() => togglePrSort("totalReal")}
                               className="py-3 px-4 text-right bg-emerald-50/50 text-emerald-900 font-extrabold cursor-pointer hover:bg-emerald-100 transition"
@@ -6430,21 +6397,11 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                             return (
                               <tr key={`${p.proveedor}-${idx}`} className="hover:bg-slate-50 transition text-[11px]">
                                 <td className="py-3 px-4 font-black text-slate-900">{p.proveedor}</td>
-                                <td className="py-3 px-2 text-right font-mono text-slate-550">
-                                  {p.sucursales.Tibasosa > 0 ? cop(p.sucursales.Tibasosa) : "—"}
-                                </td>
-                                <td className="py-3 px-2 text-right font-mono text-slate-550">
-                                  {p.sucursales.Nobsa > 0 ? cop(p.sucursales.Nobsa) : "—"}
-                                </td>
-                                <td className="py-3 px-2 text-right font-mono text-slate-550">
-                                  {p.sucursales.Fira > 0 ? cop(p.sucursales.Fira) : "—"}
-                                </td>
-                                <td className="py-3 px-2 text-right font-mono text-slate-550">
-                                  {p.sucursales.Aquitania > 0 ? cop(p.sucursales.Aquitania) : "—"}
-                                </td>
-                                <td className="py-3 px-2 text-right font-mono text-slate-550">
-                                  {p.sucursales.Hansel > 0 ? cop(p.sucursales.Hansel) : "—"}
-                                </td>
+                                {sucursalesPermitidas.map((b) => (
+                                  <td key={b} className="py-3 px-2 text-right font-mono text-slate-550">
+                                    {p.sucursales[b] > 0 ? cop(p.sucursales[b]) : "—"}
+                                  </td>
+                                ))}
                                 <td className="py-3 px-4 text-right font-mono font-black text-emerald-700 bg-emerald-50/20">
                                   {cop(p.totalReal)}
                                 </td>
@@ -7918,12 +7875,12 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                       required
                       className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
-                      <option value="Plaza">Plaza (Central)</option>
-                      <option value="Nobsa">Nobsa</option>
-                      <option value="Tibasosa">Tibasosa</option>
-                      <option value="Fira">Fira</option>
-                      <option value="Aquitania">Aquitania</option>
-                      <option value="Hansel">Hansel</option>
+                      {/* "Plaza" es la central de compras, no una sucursal: solo
+                          aplica para quien administra todo el negocio. */}
+                      {!esAdminDeUnaSucursal && <option value="Plaza">Plaza (Central)</option>}
+                      {sucursalesPermitidas.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
                     </select>
                   </div>
 
