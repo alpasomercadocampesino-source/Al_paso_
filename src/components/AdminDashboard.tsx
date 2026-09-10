@@ -2152,8 +2152,19 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const productosConPrecioNuevo = (() => {
     const porCodigo = new Map<string, { Producto: string; ventaAnterior: number; ventaNueva: number }>();
 
+    // El historial guarda la hora en UTC. Comparar el texto crudo dejaba fuera
+    // todo lo cambiado después de las 7pm en Colombia: a esa hora ya es el día
+    // siguiente en UTC, y es justo cuando se ajustan los precios de mañana.
+    const fechaColombiaDe = (iso: string): string => {
+      try {
+        return new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+      } catch {
+        return (iso || "").slice(0, 10);
+      }
+    };
+
     for (const h of priceHistory) {
-      if (!h?.Fecha_Hora || !h.Fecha_Hora.startsWith(matrixDate)) continue;
+      if (!h?.Fecha_Hora || fechaColombiaDe(h.Fecha_Hora) !== matrixDate) continue;
       const ventaAnterior = h.Venta_Anterior ?? 0;
       const ventaNueva = h.Venta_Nueva ?? 0;
       if (ventaNueva <= 0 || ventaNueva === ventaAnterior) continue;
