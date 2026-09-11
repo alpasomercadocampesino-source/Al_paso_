@@ -1846,7 +1846,10 @@ app.post("/api/admin/import-csv-orders", async (req, res) => {
   if (importedCount === 0) {
     let errorMsg = "No se pudieron importar pedidos del archivo CSV.";
     if (malformedCount > 0) {
-      errorMsg += ` Se detectaron ${malformedCount} filas mal estructuradas. Asegúrese de usar el formato correcto con el delimitador '${delimiter}' y de incluir las 8 columnas requeridas: (PRODUCTO; TIBASOSA; NOBSA; FIRA; AQUITANIA; Hansel; PROVEEDOR; PRECIO COMPRA).`;
+      // Las columnas se nombran desde la configuración: si se abre una sucursal
+      // nueva, el mensaje de ayuda la incluye sin tocar código.
+      const columnas = ["PRODUCTO", ...sucursales.map((x) => x.toUpperCase()), "PROVEEDOR", "PRECIO COMPRA"];
+      errorMsg += ` Se detectaron ${malformedCount} filas mal estructuradas. Asegúrese de usar el formato correcto con el delimitador '${delimiter}' y de incluir las ${columnas.length} columnas requeridas: (${columnas.join("; ")}).`;
     } else {
       errorMsg += " El archivo parece estar vacío o no contiene cantidades mayores a cero.";
     }

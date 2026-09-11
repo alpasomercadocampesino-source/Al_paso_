@@ -86,7 +86,8 @@ for (const archivo of [...archivosDe("src"), ...archivosDe("server"), "server.ts
       .map(sinComentarioFinal)
       .join("\n");
 
-    const presentes = NOMBRES.filter((n) => fragmento.includes(n));
+    const enMinusculas = fragmento.toLowerCase();
+    const presentes = NOMBRES.filter((n) => enMinusculas.includes(n.toLowerCase()));
     // Con una sola sucursal no hay lista: no rompe a las demás.
     if (presentes.length < 2) continue;
     if (yaReportadas.has(i)) continue;

@@ -24,6 +24,7 @@ import {
   getBranchPendingCount as getBranchPendingCountUtil,
   DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
+import { coloresSucursal } from "../utils/coloresSucursal";
 
 interface CompradorDashboardProps {
   username: string;
@@ -299,7 +300,14 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         const ctx = canvas.getContext("2d");
         if (!ctx) return reject(new Error("No se pudo obtener el contexto 2D"));
 
-        const width = 980;
+        // El ancho sale de cuántas sucursales estén activas. Con cinco da los
+        // mismos 980px de siempre; con una más, las columnas no se encima.
+        const anchoSucursal = 80;
+        const xSucursales = 300;
+        const xRequerido = xSucursales + sucursales.length * anchoSucursal + 30;
+        const xCosto = xRequerido + 120;
+        const xSubtotal = xCosto + 100;
+        const width = Math.max(980, xSubtotal + 30);
         const rowHeight = 38;
         const headerHeight = 160;
         const footerHeight = 110;
@@ -352,16 +360,14 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         ctx.fillText("PRODUCTO", 30, yTable + 26);
 
         ctx.textAlign = "center";
-        ctx.fillText("TIBASOSA", 300, yTable + 26);
-        ctx.fillText("NOBSA", 380, yTable + 26);
-        ctx.fillText("FIRA", 460, yTable + 26);
-        ctx.fillText("AQUITANIA", 540, yTable + 26);
-        ctx.fillText("HANSEL", 620, yTable + 26);
-        ctx.fillText("REQUERIDO TOTAL", 730, yTable + 26);
+        sucursales.forEach((b, i) => {
+          ctx.fillText(b.toUpperCase(), xSucursales + i * anchoSucursal, yTable + 26);
+        });
+        ctx.fillText("REQUERIDO TOTAL", xRequerido, yTable + 26);
 
         ctx.textAlign = "right";
-        ctx.fillText("COSTO", 850, yTable + 26);
-        ctx.fillText("SUBTOTAL", 950, yTable + 26);
+        ctx.fillText("COSTO", xCosto, yTable + 26);
+        ctx.fillText("SUBTOTAL", xSubtotal, yTable + 26);
 
         // Table Rows
         let currY = yTable + tableHeaderHeight;
@@ -388,7 +394,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           const branchValues = sucursales.map((b, i) => ({
             q: parseQty(row[b]),
             val: row[b],
-            x: 300 + i * 80,
+            x: xSucursales + i * anchoSucursal,
           }));
 
           ctx.textAlign = "center";
@@ -408,19 +414,19 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           ctx.textAlign = "center";
           ctx.fillStyle = "#047857";
           ctx.font = "bold 12px system-ui, sans-serif";
-          ctx.fillText(`${formatQty(row.Requerido)} ${row.Medida}`, 730, currY + 23);
+          ctx.fillText(`${formatQty(row.Requerido)} ${row.Medida}`, xRequerido, currY + 23);
 
           // Cost
           ctx.textAlign = "right";
           ctx.fillStyle = "#475569";
           ctx.font = "11px monospace";
-          ctx.fillText(cop(row.Precio_Compra), 850, currY + 23);
+          ctx.fillText(cop(row.Precio_Compra), xCosto, currY + 23);
 
           // Subtotal
           ctx.textAlign = "right";
           ctx.fillStyle = "#047857";
           ctx.font = "bold 12px monospace";
-          ctx.fillText(cop(row.Total), 950, currY + 23);
+          ctx.fillText(cop(row.Total), xSubtotal, currY + 23);
 
           currY += rowHeight;
         });
@@ -1998,11 +2004,11 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                                 <thead>
                                   <tr className="bg-slate-100/90 text-slate-600 font-extrabold border-b border-slate-200 text-[10px] uppercase tracking-wider">
                                     <th className="py-2.5 px-3">PRODUCTO</th>
-                                    <th className="py-2.5 px-3 text-center bg-blue-50/60 text-blue-900 font-black">TIBASOSA</th>
-                                    <th className="py-2.5 px-3 text-center bg-indigo-50/60 text-indigo-900 font-black">NOBSA</th>
-                                    <th className="py-2.5 px-3 text-center bg-purple-50/60 text-purple-900 font-black">FIRA</th>
-                                    <th className="py-2.5 px-3 text-center bg-amber-50/60 text-amber-900 font-black">AQUITANIA</th>
-                                    <th className="py-2.5 px-3 text-center bg-emerald-50/60 text-emerald-900 font-black">HANSEL</th>
+                                    {sucursales.map((b) => (
+                                      <th key={b} className="py-2.5 px-3 text-center font-black" style={{ backgroundColor: coloresSucursal(b).bg, color: coloresSucursal(b).texto }}>
+                                        {b.toUpperCase()}
+                                      </th>
+                                    ))}
                                     <th className="py-2.5 px-3 text-center bg-slate-200 text-slate-900 font-black">REQUERIDO TOTAL</th>
                                     <th className="py-2.5 px-3 text-right">COSTO UNIT</th>
                                     <th className="py-2.5 px-3 text-right font-black text-slate-900">SUBTOTAL</th>
@@ -2260,11 +2266,9 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                               {compSortField === "Producto" ? (compSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                             </div>
                           </th>
-                          <th className="py-3 px-3 text-center border-r border-slate-200 w-20">TIBASOSA</th>
-                          <th className="py-3 px-3 text-center border-r border-slate-200 w-20">NOBSA</th>
-                          <th className="py-3 px-3 text-center border-r border-slate-200 w-20">FIRA</th>
-                          <th className="py-3 px-3 text-center border-r border-slate-200 w-20">AQUITANIA</th>
-                          <th className="py-3 px-3 text-center border-r border-slate-200 w-20">HANSEL</th>
+                          {sucursales.map((b) => (
+                            <th key={b} className="py-3 px-3 text-center border-r border-slate-200 w-20">{b.toUpperCase()}</th>
+                          ))}
                           <th 
                             onClick={() => toggleCompSort("Proveedor")}
                             className="py-3 px-3 border-r border-slate-200 cursor-pointer hover:bg-slate-200 transition text-slate-900 font-black"
@@ -2293,11 +2297,9 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                             </div>
                           </th>
                           <th className="py-3 px-3 border-r border-slate-200 min-w-[200px]">OBSERVACION</th>
-                          <th className="py-3 px-3 text-right border-r border-slate-200">TIBASOSA_PAG</th>
-                          <th className="py-3 px-3 text-right border-r border-slate-200">NOBSA_PAG</th>
-                          <th className="py-3 px-3 text-right border-r border-slate-200">FIRA_PAG</th>
-                          <th className="py-3 px-3 text-right border-r border-slate-200">AQUITANIA_PAG</th>
-                          <th className="py-3 px-3 text-right border-r border-slate-200">HANSEL_PAG</th>
+                          {sucursales.map((b) => (
+                            <th key={`${b}_PAG`} className="py-3 px-3 text-right border-r border-slate-200">{b.toUpperCase()}_PAG</th>
+                          ))}
                           <th 
                             onClick={() => toggleCompSort("Total")}
                             className="py-3 px-3 text-right font-bold text-slate-800 border-r border-slate-200 cursor-pointer hover:bg-slate-200 transition"
