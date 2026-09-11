@@ -116,6 +116,15 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   // para que una sucursal nueva aparezca sola, sin tener que tocar el código.
   const [sucursales, setSucursales] = useState<string[]>(DEFAULT_BRANCHES);
 
+  // El servidor lee el CSV pegado por POSICIÓN de columna, así que el ejemplo
+  // tiene que salir de la misma lista de sucursales. Si aquí faltara una, lo
+  // pegado quedaría corrido y los pedidos entrarían a la sucursal equivocada.
+  const columnasCsv = ["PRODUCTO", ...sucursales.map((b) => b.toUpperCase()), "PROVEEDOR", "PRECIO COMPRA"];
+  const ejemploCsv = [
+    columnasCsv.join(";"),
+    ["Papa Pastusa", ...sucursales.map((_, i) => (i === 0 ? "3" : "0")), "ADRIAN", "2500"].join(";"),
+  ].join("\n");
+
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -3847,7 +3856,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                     rows={6}
                     value={csvInputText}
                     onChange={(e) => setCsvInputText(e.target.value)}
-                    placeholder="PRODUCTO;TIBASOSA;NOBSA;FIRA;AQUITANIA;Hansel;PROVEEDOR;PRECIO COMPRA&#10;Papa Pastusa;3;1;0;3;2;ADRIAN;2500"
+                    placeholder={ejemploCsv}
                     className="w-full p-3 font-mono text-xs bg-slate-50 border border-slate-300 rounded-2xl text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none transition"
                   />
                 </div>
@@ -3855,7 +3864,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                 <div className="p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-amber-900 text-xs flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <span>
-                    <strong>Estructura esperada:</strong> Columnas con <i>PRODUCTO; TIBASOSA; NOBSA; FIRA; AQUITANIA; Hansel; PROVEEDOR; PRECIO COMPRA</i>. Si el producto o proveedor no existe, se creará automáticamente.
+                    <strong>Estructura esperada:</strong> Columnas con <i>{columnasCsv.join("; ")}</i>. Si el producto o proveedor no existe, se creará automáticamente.
                   </span>
                 </div>
               </div>

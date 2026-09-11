@@ -115,6 +115,13 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [sucursalesDelServidor, setSucursalesDelServidor] = useState<string[]>(DEFAULT_BRANCHES);
   const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : sucursalesDelServidor;
 
+  // Ejemplo del pegado de pedidos: una columna por sucursal, en el mismo orden
+  // en que el servidor las lee. Solo se muestra al administrador general.
+  const ejemploCsvAdmin = [
+    ["PRODUCTO", ...sucursalesDelServidor.map((b) => b.toUpperCase()), "PROVEEDOR", "PRECIO COMPRA"].join(";"),
+    ["Sobre Adobo", ...sucursalesDelServidor.map((_, i) => (i === 0 ? "10" : "0")), "adobos", "2100"].join(";"),
+  ].join("\n");
+
   useEffect(() => {
     if (sucursalAsignada) return; // su alcance es una sola, no hace falta consultar
     let vivo = true;
@@ -5750,7 +5757,13 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   </div>
                 </div>
 
-                {/* CSV Import Panel */}
+                {/* CSV Import Panel
+                    El servidor reparte las columnas del pegado entre TODAS las
+                    sucursales, por posición. Un administrador de una sola
+                    sucursal no puede ver las demás, así que tampoco puede armar
+                    ese pegado: se le oculta en vez de mostrarle un ejemplo que
+                    importaría a la sucursal equivocada. */}
+                {!sucursalAsignada && (
                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
                   <div>
                     <h4 className="text-slate-800 text-sm font-black flex items-center gap-1.5">
@@ -5762,8 +5775,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <div className="space-y-3">
                     <textarea
                       rows={5}
-                      placeholder="PRODUCTO;TIBASOSA;NOBSA;FIRA;AQUITANIA;Hansel;PROVEEDOR;PRECIO COMPRA
-Sobre Adobo;0;0;10;0;0;adobos;2100"
+                      placeholder={ejemploCsvAdmin}
                       value={csvTextInput}
                       onChange={(e) => setCsvTextInput(e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-[10px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -5781,6 +5793,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                     </div>
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Right Column - Provider Account List */}
@@ -6498,7 +6511,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                 <div className="bg-amber-50 border border-amber-200/70 p-4 rounded-2xl flex gap-3">
                   <span className="shrink-0 text-amber-600 font-bold text-sm">ℹ️</span>
                   <p className="text-amber-800 text-xs leading-relaxed font-medium">
-                    <strong>Importante:</strong> Las contraseñas de las sucursales (Tibasosa, Nobsa, Fira, Aquitania, Hansel) son de uso diario para los colaboradores de cada punto. Modifíquelas con discreción para evitar interrupciones de acceso.
+                    <strong>Importante:</strong> Las contraseñas de las sucursales ({sucursalesPermitidas.join(", ")}) son de uso diario para los colaboradores de cada punto. Modifíquelas con discreción para evitar interrupciones de acceso.
                   </p>
                 </div>
               </div>

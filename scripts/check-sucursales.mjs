@@ -50,15 +50,16 @@ function archivosDe(dir, acc = []) {
 }
 
 /**
- * Líneas que no cuentan: comentarios y texto visible para la persona usuaria
- * (ayudas, ejemplos, marcadores). Se evalúa LÍNEA POR LÍNEA a propósito: al
- * evaluarlo sobre toda la ventana, un comentario cercano desactivaba el chequeo
- * del bloque entero y dejaba pasar listas reales.
+ * Líneas que no cuentan: solo comentarios. El texto visible NO se perdona:
+ * antes sí, y por eso pasaron los ejemplos del pegado de pedidos, que el
+ * servidor reparte por posición de columna.
+ *
+ * Se evalúa LÍNEA POR LÍNEA a propósito: al evaluarlo sobre toda la ventana,
+ * un comentario cercano desactivaba el chequeo del bloque entero.
  */
 function seIgnora(linea) {
   const t = linea.trimStart();
-  if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return true;
-  return /placeholder=|<strong>|<i>|<p[\s>]|title=/.test(linea);
+  return t.startsWith("//") || t.startsWith("*") || t.startsWith("/*");
 }
 
 /** Quita el comentario del final de una línea de código. */
