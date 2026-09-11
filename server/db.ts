@@ -188,6 +188,10 @@ export interface Order {
   Estado_Pago: "Pendiente" | "Pagado";
   Proveedor: string;
   Celular: string;
+  /** Verificación de despacho: la sucursal confirma que el producto llegó. */
+  Recibido_Sucursal?: boolean;
+  Recibido_Por?: string;
+  Recibido_Fecha?: string;
 }
 
 export interface DailyClosure {
@@ -1015,6 +1019,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       Cantidad_Comprada: o.cantidadComprada ?? 0, Costo_Momento: o.costoMomento ?? 0, Precio_Venta_Momento: o.precioVentaMomento ?? 0,
       Kilos: o.kilos ?? 0, Estado: (o.estado as any) || "Pendiente", Estado_Pago: (o.estadoPago as any) || "Pendiente",
       Proveedor: o.proveedor || "", Celular: o.celular || "",
+      Recibido_Sucursal: !!o.recibidoSucursal, Recibido_Por: o.recibidoPor || "", Recibido_Fecha: o.recibidoFecha || "",
     } as Order, o.clientId)),
     closures: closuresRows.map((c) => tagId({
       ID_Cierre: c.idCierre, Fecha: c.fecha, Sucursal: c.sucursal, Ventas_Totales: c.ventasTotales ?? 0, Gastos_Extra: c.gastosExtra ?? 0,
@@ -1057,8 +1062,34 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
   };
 }
 
+/**
+ * Columnas que se agregaron después de crear las tablas.
+ *
+ * Se aplican al arrancar y son idempotentes: si ya existen no pasa nada. Así
+ * un despliegue nuevo — o la base de otro cliente — queda al día sin que nadie
+ * tenga que acordarse de correr algo a mano en Supabase.
+ */
+async function asegurarColumnas(): Promise<void> {
+  const columnas: [string, string, string][] = [
+    ["orders", "recibido_sucursal", "BOOLEAN DEFAULT FALSE"],
+    ["orders", "recibido_por", "TEXT DEFAULT ''"],
+    ["orders", "recibido_fecha", "TEXT DEFAULT ''"],
+  ];
+  for (const [tabla, columna, tipo] of columnas) {
+    try {
+      await pgDb.execute(
+        sql`ALTER TABLE ${sql.identifier(tabla)} ADD COLUMN IF NOT EXISTS ${sql.identifier(columna)} ${sql.raw(tipo)}`
+      );
+    } catch (err: any) {
+      console.error(`[Database] No se pudo asegurar ${tabla}.${columna}:`, err?.message || err);
+    }
+  }
+}
+
 export async function initDb(): Promise<DatabaseSchema> {
   let db: DatabaseSchema;
+
+  await asegurarColumnas();
 
   try {
     db = await loadFromPostgres();
@@ -1125,6 +1156,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
       cantidad: o.Cantidad, notas: o.Notas, precio_anterior: o.Precio_Anterior, porcentaje_ganancia: o.Porcentaje_Ganancia,
       cantidad_comprada: o.Cantidad_Comprada, costo_momento: o.Costo_Momento, precio_venta_momento: o.Precio_Venta_Momento,
       kilos: o.Kilos, estado: o.Estado, estado_pago: o.Estado_Pago, proveedor: o.Proveedor, celular: o.Celular,
+      recibido_sucursal: !!o.Recibido_Sucursal, recibido_por: o.Recibido_Por || "", recibido_fecha: o.Recibido_Fecha || "",
     })));
   },
   closures: async (db, tx) => {

@@ -69,6 +69,10 @@ export const orders = pgTable("orders", {
   estadoPago: text("estado_pago").default("Pendiente"),
   proveedor: text("proveedor").default(""),
   celular: text("celular").default(""),
+  // Verificación de despacho: la sucursal confirma qué llegó de plaza.
+  recibidoSucursal: boolean("recibido_sucursal").default(false),
+  recibidoPor: text("recibido_por").default(""),
+  recibidoFecha: text("recibido_fecha").default(""),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [

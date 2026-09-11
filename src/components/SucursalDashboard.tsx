@@ -487,8 +487,14 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
     try {
       const res = await fetch(`/api/orders?sucursal=${branchName}&fecha=${rectDate}`);
       if (res.ok) {
-        const data = await res.json();
+        const data: Order[] = await res.json();
         setRectOrders(data);
+        // Las casillas salen como quedaron guardadas la última vez, no en blanco.
+        const guardadas: { [k: string]: boolean } = {};
+        for (const o of data) {
+          if (o.Recibido_Sucursal) guardadas[`${o.ID_Pedido}_${o.Codigo}`] = true;
+        }
+        setCheckedItems(guardadas);
       }
     } catch (e) {
       console.error(e);
@@ -498,6 +504,39 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   useEffect(() => {
     fetchTodayOrders();
   }, [rectDate]);
+
+  /**
+   * Envía la verificación de despacho a la base de datos.
+   *
+   * Se manda la lista completa de lo marcado, no solo lo nuevo, para que
+   * desmarcar un renglón también quede guardado.
+   */
+  const enviarVerificacion = async () => {
+    const verificados = rectOrders
+      .filter((o) => checkedItems[`${o.ID_Pedido}_${o.Codigo}`])
+      .map((o) => ({ ID_Pedido: o.ID_Pedido, Codigo: o.Codigo }));
+
+    setLoading(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/orders/verify-reception", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ Sucursal: branchName, Fecha: rectDate, verificados }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "No se pudo guardar la verificación.");
+      setSuccessMsg(
+        `Verificación guardada: ${verificados.length} de ${rectOrders.length} productos confirmados como recibidos.`
+      );
+      await fetchTodayOrders();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchPreviousOrder = async () => {
     try {
@@ -2074,7 +2113,30 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                   <table className="w-full text-left text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-slate-100 text-slate-400 font-bold">
-                        <th className="py-3 px-3 w-16 text-center">Verificar</th>
+                        <th className="py-3 px-3 w-16 text-center">
+                          {/* Marcar y desmarcar todo de una, que es como se
+                              trabaja cuando llega el despacho completo. */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const todos = rectOrders.every((o) => checkedItems[`${o.ID_Pedido}_${o.Codigo}`]);
+                              if (todos) {
+                                setCheckedItems({});
+                              } else {
+                                const marcadas: { [k: string]: boolean } = {};
+                                for (const o of rectOrders) marcadas[`${o.ID_Pedido}_${o.Codigo}`] = true;
+                                setCheckedItems(marcadas);
+                              }
+                            }}
+                            title={rectOrders.every((o) => checkedItems[`${o.ID_Pedido}_${o.Codigo}`]) ? "Desmarcar todos" : "Seleccionar todos"}
+                            className="inline-flex flex-col items-center gap-0.5 text-slate-400 hover:text-emerald-600 transition cursor-pointer"
+                          >
+                            {rectOrders.length > 0 && rectOrders.every((o) => checkedItems[`${o.ID_Pedido}_${o.Codigo}`])
+                              ? <CheckSquare className="w-5 h-5 text-emerald-500" />
+                              : <Square className="w-5 h-5" />}
+                            <span className="text-[9px] font-bold uppercase tracking-wide">Todos</span>
+                          </button>
+                        </th>
                         <th className="py-3 px-2">Código</th>
                         <th className="py-3 px-2">Producto</th>
                         <th className="py-3 px-2">Medida</th>
@@ -2137,10 +2199,36 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                   </table>
                 </div>
 
+                {/* GUARDAR LA VERIFICACIÓN
+                    Antes las casillas solo vivían en la pantalla: al recargar
+                    se perdían y nadie más se enteraba de lo verificado. */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs text-slate-600">
+                    <span className="font-black text-slate-800">
+                      {rectOrders.filter((o) => checkedItems[`${o.ID_Pedido}_${o.Codigo}`]).length} de {rectOrders.length}
+                    </span>{" "}
+                    productos marcados como recibidos.
+                    {rectOrders.some((o) => o.Recibido_Sucursal) && (
+                      <span className="block text-slate-400 text-[11px] mt-1">
+                        Última verificación guardada por {rectOrders.find((o) => o.Recibido_Sucursal)?.Recibido_Por || "—"}.
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={enviarVerificacion}
+                    disabled={loading}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition shadow-sm shrink-0"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {loading ? "Enviando…" : "Enviar verificación"}
+                  </button>
+                </div>
+
                 <div className="p-4 bg-slate-50 rounded-2xl text-xs text-slate-500 flex items-start gap-2.5 leading-relaxed">
                   <Info className="w-4 h-4 text-slate-400 shrink-0" />
                   <span>
-                    <strong>Instrucción de despacho:</strong> Use esta planilla para marcar físicamente el pedido al desempacar la canastilla de despacho de plaza. Al verificar todos los productos marcados, su sucursal de {branchName} tendrá la seguridad del inventario exacto recibido.
+                    <strong>Instrucción de despacho:</strong> Use esta planilla para marcar físicamente el pedido al desempacar la canastilla de despacho de plaza. Al terminar, presione <strong>Enviar verificación</strong> para que quede guardado: así la administración ve qué llegó y qué no.
                   </span>
                 </div>
               </div>

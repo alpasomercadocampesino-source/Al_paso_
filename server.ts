@@ -611,6 +611,51 @@ app.put("/api/orders/:id", async (req, res) => {
   res.json(db.orders[index]);
 });
 
+/**
+ * La sucursal confirma qué le llegó de plaza.
+ *
+ * Antes las casillas de la planilla de rectificación solo vivían en la pantalla:
+ * al recargar se perdían y nadie más se enteraba de lo que se había verificado.
+ * Ahora la confirmación queda guardada con el nombre de quien la hizo.
+ *
+ * Se manda la lista completa de renglones verificados, no solo los nuevos: así
+ * desmarcar uno también queda registrado.
+ */
+app.post("/api/orders/verify-reception", async (req, res) => {
+  const { Sucursal, Fecha, verificados } = req.body;
+  if (!Sucursal || !Fecha || !Array.isArray(verificados)) {
+    return res.status(400).json({ error: "Se requieren la sucursal, la fecha y la lista de renglones verificados." });
+  }
+  if (!puedeVerSucursal(req, Sucursal)) {
+    return res.status(403).json({ error: "No puedes confirmar el despacho de esta sucursal." });
+  }
+
+  const marcados = new Set(verificados.map((v: any) => `${v?.ID_Pedido}||${v?.Codigo}`));
+  const quien = req.auth?.u || "Sucursal";
+  const cuando = new Date().toISOString();
+
+  let confirmados = 0;
+  let desmarcados = 0;
+  for (const o of db.orders || []) {
+    if (!o || o.Fecha !== Fecha || norm(o.Sucursal) !== norm(Sucursal)) continue;
+    const estaMarcado = marcados.has(`${o.ID_Pedido}||${o.Codigo}`);
+    if (estaMarcado) {
+      if (!o.Recibido_Sucursal) confirmados++;
+      o.Recibido_Sucursal = true;
+      o.Recibido_Por = quien;
+      o.Recibido_Fecha = cuando;
+    } else if (o.Recibido_Sucursal) {
+      o.Recibido_Sucursal = false;
+      o.Recibido_Por = "";
+      o.Recibido_Fecha = "";
+      desmarcados++;
+    }
+  }
+
+  await saveDb(db, ["orders"]);
+  res.json({ success: true, confirmados, desmarcados, total: marcados.size, responsable: quien });
+});
+
 app.post("/api/orders/bulk-update", async (req, res) => {
   const { updates } = req.body; // Array of { ID_Pedido, Codigo, fields }
   if (!updates || !Array.isArray(updates)) {

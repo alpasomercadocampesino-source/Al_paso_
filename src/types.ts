@@ -54,6 +54,10 @@ export interface Order {
   Estado_Pago: "Pendiente" | "Pagado";
   Proveedor: string;
   Celular: string;
+  /** Verificación de despacho: la sucursal confirma que el producto llegó. */
+  Recibido_Sucursal?: boolean;
+  Recibido_Por?: string;
+  Recibido_Fecha?: string;
 }
 
 export interface DailyClosure {
