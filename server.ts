@@ -2418,7 +2418,12 @@ app.post("/api/admin/backups", requireRole("Admin"), async (req, res) => {
 app.post("/api/admin/backups/:id/restore", requireRole("Admin"), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const permitidas = ["orders", "closures", "wallet_transactions", "products", "shrinkages", "nequi_expenses"];
+    // Todas las tablas que puede vaciar "limpiar datos operativos", más products.
+    const permitidas = [
+      "orders", "closures", "wallet_transactions", "products", "shrinkages",
+      "packaging_movements", "employee_schedules", "employee_loans",
+      "payroll_records", "price_histories", "nequi_expenses",
+    ];
     const pedidas: string[] = Array.isArray(req.body?.tablas) && req.body.tablas.length > 0
       ? req.body.tablas.filter((t: string) => permitidas.includes(t))
       : ["orders", "closures", "wallet_transactions", "products"];
