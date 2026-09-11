@@ -2531,16 +2531,23 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const totalNoRecaudado = calculateTotalUncollected(closures, walletTxs, sucursalesPermitidas);
   const totalStoreExpenses = cierresMes.reduce((acc, c) => acc + (c.Gastos_Extra || 0), 0);
 
-  // ── Cambios de precio recientes ─────────────────────────────────────────
-  // La tarjeta decía "Últimos Cambios" y mostraba el total de toda la
-  // bitácora, así que una sola actualización masiva de hace días se leía como
-  // si se hubiera cambiado todo hoy.
-  const haceUnaSemana = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const cambiosRecientes = priceHistory.filter((h) => (h?.Fecha_Hora || "") >= haceUnaSemana).length;
-  const ultimoCambio = priceHistory.reduce(
-    (mayor, h) => ((h?.Fecha_Hora || "") > mayor ? h.Fecha_Hora : mayor),
-    ""
-  );
+  // ── Cambios de precio ───────────────────────────────────────────────────
+  // La bitácora guarda una fila por producto, pero los precios se cambian de
+  // tanda: al guardar la matriz se escriben de golpe todos los productos
+  // editados. La tarjeta mostraba el total de filas, así que una sola tanda de
+  // 106 productos se leía como si se hubiera cambiado todo hoy.
+  //
+  // Se agrupa por minuto: una tanda entra en milisegundos, así que cada minuto
+  // con filas es una actualización.
+  const tandasDePrecio = priceHistory.reduce((mapa, h) => {
+    const minuto = (h?.Fecha_Hora || "").slice(0, 16);
+    if (!minuto) return mapa;
+    mapa.set(minuto, (mapa.get(minuto) || 0) + 1);
+    return mapa;
+  }, new Map<string, number>());
+  const minutosOrdenados = [...tandasDePrecio.keys()].sort();
+  const ultimaTanda = minutosOrdenados[minutosOrdenados.length - 1] || "";
+  const productosUltimaTanda = tandasDePrecio.get(ultimaTanda) || 0;
 
   const branches = sucursalesPermitidas;
 
@@ -3676,12 +3683,18 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
               <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between">
                 <div>
-                  <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Cambios de Precios (7 días)</span>
-                  <h3 className="text-3xl font-extrabold text-slate-800 mt-2">{cambiosRecientes} Cambios</h3>
-                  <p className="text-slate-500 text-xs mt-1">Auditoría de ajustes de precios y costos de proveedores.</p>
+                  <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Última Actualización de Precios</span>
+                  <h3 className="text-3xl font-extrabold text-slate-800 mt-2">
+                    {productosUltimaTanda} {productosUltimaTanda === 1 ? "Producto" : "Productos"}
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-1">
+                    {ultimaTanda
+                      ? <>Cambiados el {new Date(ultimaTanda).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}.</>
+                      : <>Todavía no se ha cambiado ningún precio.</>}
+                  </p>
                   <p className="text-slate-400 text-[11px] mt-1.5">
-                    {priceHistory.length} en toda la bitácora
-                    {ultimoCambio && <> · último el {new Date(ultimoCambio).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })}</>}
+                    {minutosOrdenados.length} {minutosOrdenados.length === 1 ? "actualización" : "actualizaciones"} en total
+                    {" · "}{priceHistory.length} cambios de precio en la bitácora
                   </p>
                 </div>
                 <button
