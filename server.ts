@@ -1565,6 +1565,20 @@ app.put("/api/payroll/rates/:name", requireRole("Admin", "AdminSucursal"), async
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
 
+  // Un administrador de sucursal solo edita personal suyo. Sin esto podía
+  // cambiarle el sueldo a cualquiera con solo saberse el nombre.
+  if (req.auth?.r === "AdminSucursal" && !puedeVerSucursal(req, db.rates[index].Sucursal)) {
+    return res.status(403).json({ error: "Este empleado no pertenece a tu sucursal." });
+  }
+
+  // La sucursal se conserva. Antes se rearmaba el registro sin ella, así que
+  // cualquier edición — cambiar un valor, un celular — dejaba al empleado sin
+  // sucursal y volvía a aparecer en la nómina del administrador general.
+  let sucursalDelEmpleado = db.rates[index].Sucursal;
+  if (req.auth?.r === "Admin" && req.body.Sucursal !== undefined) {
+    sucursalDelEmpleado = req.body.Sucursal || undefined;
+  }
+
   const updatedName = (Empleado || oldName).trim();
 
   if (updatedName.toLowerCase() !== oldName.toLowerCase()) {
@@ -1586,6 +1600,7 @@ app.put("/api/payroll/rates/:name", requireRole("Admin", "AdminSucursal"), async
 
   db.rates[index] = {
     Empleado: updatedName,
+    Sucursal: sucursalDelEmpleado,
     Valor_Dia: Valor_Dia !== undefined ? Math.round(parseFloat(Valor_Dia)) : db.rates[index].Valor_Dia,
     Valor_Hora: Valor_Hora !== undefined ? Math.round(parseFloat(Valor_Hora)) : db.rates[index].Valor_Hora,
     Auxilio_Transporte: Auxilio_Transporte !== undefined ? Math.round(parseFloat(Auxilio_Transporte)) : (db.rates[index].Auxilio_Transporte !== undefined ? db.rates[index].Auxilio_Transporte : 8303),
