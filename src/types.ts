@@ -70,6 +70,8 @@ export interface DailyClosure {
 }
 
 export interface WalletTransaction {
+  /** Lo genera el servidor. Es lo que identifica el movimiento para borrarlo. */
+  ID_Transaccion?: string;
   Fecha: string;
   Sucursal: string;
   Tipo_Movimiento: "Ingreso" | "Gasto";
