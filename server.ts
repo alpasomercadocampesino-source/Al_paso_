@@ -1402,6 +1402,55 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
   res.status(210).json(newTx);
 });
 
+/**
+ * Borra un movimiento del monedero.
+ *
+ * Existe porque un movimiento mal cargado no se podía corregir de ninguna
+ * forma: quedaba en el libro para siempre y había que compensarlo con otro
+ * movimiento inventado, que es de donde salieron los "ajustes para cuadrar".
+ *
+ * Si el movimiento era la entrada de una recolección, el cierre que la generó
+ * vuelve a quedar pendiente en la tienda. Sin eso la plata desaparecería de los
+ * dos lados: ni en la caja central ni en el efectivo del punto.
+ */
+app.delete("/api/wallet/transaction/:id", requireRole("Admin"), async (req, res) => {
+  const id = decodeURIComponent(req.params.id).trim();
+  const idx = (db.walletTransactions || []).findIndex((t) => t && t.ID_Transaccion === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Movimiento no encontrado" });
+  }
+
+  const tx = db.walletTransactions[idx];
+  if (!puedeVerSucursal(req, tx.Sucursal)) {
+    return res.status(403).json({ error: "No puedes borrar movimientos de este monedero." });
+  }
+
+  // El identificador del cierre viaja entre corchetes al final de la descripción.
+  let cierreLiberado: string | null = null;
+  const texto = String(tx.Descripcion || "");
+  const abre = texto.lastIndexOf("[");
+  const cierra = texto.lastIndexOf("]");
+  if (abre !== -1 && cierra > abre) {
+    const idCierre = texto.slice(abre + 1, cierra).trim();
+    const cierre = (db.closures || []).find((c) => c && c.ID_Cierre === idCierre);
+    if (cierre) {
+      cierre.Recaudado_Fisico = false;
+      cierre.Monto_Recaudado = 0;
+      cierreLiberado = cierre.ID_Cierre;
+    }
+  }
+
+  db.walletTransactions.splice(idx, 1);
+  await deleteRowByClientId("wallet_transactions", (tx as any)._id);
+  await saveDb(db, cierreLiberado ? ["walletTransactions", "closures"] : ["walletTransactions"]);
+
+  res.json({
+    success: true,
+    borrado: { id: tx.ID_Transaccion, valor: tx.Valor, tipo: tx.Tipo_Movimiento, descripcion: tx.Descripcion },
+    cierreLiberado,
+  });
+});
+
 // Mermas (Shrinkage)
 app.get("/api/shrinkages", (req, res) => {
   const { sucursal } = req.query;
