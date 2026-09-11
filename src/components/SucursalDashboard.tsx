@@ -910,11 +910,6 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
       // localeCompare con sensitivity base: la Ñ y los acentos quedan donde
       // uno los busca, no al final de la lista.
       cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
-    } else if (catSortField === "Proveedor") {
-      // Agrupa por proveedor; dentro de cada uno, alfabético por producto, que es
-      // como se arma el pedido cuando se piensa "qué le pido a este proveedor".
-      cmp = (a.Proveedor || "").localeCompare(b.Proveedor || "", "es", { sensitivity: "base" });
-      if (cmp === 0) cmp = a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" });
     } else if (catSortField === "Medida") {
       cmp = (a.Medida || "").localeCompare(b.Medida || "", "es", { sensitivity: "base" });
     } else if (catSortField === "Anterior") {
@@ -1078,13 +1073,12 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                 </div>
               </div>
 
-              {/* Selector de orden. Proveedor no es una columna de esta tabla, así
-                  que necesita estar aquí y no en los encabezados. */}
+              {/* Selector de orden para los criterios que no son columnas de la
+                  tabla y por tanto no se pueden ordenar desde el encabezado. */}
               <div className="flex flex-wrap items-center gap-2 mb-4">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ordenar por</span>
                 {[
                   { campo: "Producto", etiqueta: "Producto", icono: "🔤" },
-                  { campo: "Proveedor", etiqueta: "Proveedor", icono: "🏢" },
                   { campo: "Codigo", etiqueta: "Código", icono: "🔢" },
                   { campo: "Anterior", etiqueta: "Pedido anterior", icono: "📋" },
                 ].map((op) => {
@@ -1169,13 +1163,6 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                               <Calculator className="w-3.5 h-3.5" />
                             </button>
                           </div>
-                          {/* El proveedor solo se muestra cuando se ordena por él:
-                              si no, el orden se vería arbitrario en pantalla. */}
-                          {catSortField === "Proveedor" && (
-                            <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">
-                              🏢 {p.Proveedor || "Sin proveedor"}
-                            </span>
-                          )}
                         </td>
                         <td className="py-2 px-2 text-xs text-slate-500 font-medium">
                           <div className="flex flex-col">
