@@ -244,7 +244,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [cierreRetroAviso, setCierreRetroAviso] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   /** Solo dígitos: los campos de dinero aceptan "1.500.000" y "1500000" por igual. */
-  const soloDigitos = (v: string) => parseFloat(String(v).replace(/D/g, "")) || 0;
+  const soloDigitos = (v: string) => parseFloat(String(v).replace(/[^0-9]/g, "")) || 0;
 
   const gastosRetroValidos = cierreRetroGastos.filter((g) => soloDigitos(g.valor) > 0 && g.desc.trim());
   const totalGastosRetro = gastosRetroValidos.reduce((a, g) => a + soloDigitos(g.valor), 0);
