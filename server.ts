@@ -2130,8 +2130,22 @@ app.post("/api/admin/import-csv-orders", requireRole("Admin", "Comprador"), asyn
   res.json({ success: true, count: importedCount, date: orderDate });
 });
 
+/**
+ * Toma un respaldo antes de una operación que borra datos. Si el respaldo falla,
+ * lanza — y quien llame NO debe borrar nada. Convierte cualquier borrado (un
+ * error, un clic de más, una sesión de admin comprometida) en algo que se
+ * recupera con una sola llamada a /restore.
+ */
+async function respaldarAntesDeBorrar(motivo: string): Promise<number> {
+  const { id } = await createBackup(`auto antes de: ${motivo}`);
+  return id;
+}
+
 app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, res) => {
   try {
+    // Red de seguridad: si esto falla, no se borra nada.
+    const respaldoId = await respaldarAntesDeBorrar("limpiar datos operativos");
+
     db.orders = [];
     db.closures = [];
     db.walletTransactions = [];
@@ -2159,6 +2173,7 @@ app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, 
 
     res.json({
       success: true,
+      respaldoPrevio: respaldoId,
       message: "Base de datos operativa vaciada con éxito. Los pedidos, cierres, mermas, nómina, gastos y horarios fueron eliminados para la entrega del sistema."
     });
   } catch (err: any) {
@@ -2169,6 +2184,7 @@ app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, 
 
 app.post("/api/admin/clear-past-months-history", requireRole("Admin"), async (req, res) => {
   try {
+    await respaldarAntesDeBorrar("limpiar históricos de meses anteriores");
     const result = await purgePastMonthsOrdersAndClosures(db);
     await saveDb(db, ["orders", "closures"]);
     recordSyncLog(
@@ -2195,12 +2211,24 @@ app.post("/api/admin/clear-past-months-history", requireRole("Admin"), async (re
 
 app.post("/api/test/run", requireRole("Admin"), async (req, res) => {
   try {
+    // Esta prueba BORRA pedidos, cierres, monederos e historial de precios y los
+    // reemplaza por datos de ejemplo. En una base con datos reales es una pérdida
+    // total, así que exige una confirmación explícita y respalda antes de tocar
+    // nada. Sin la confirmación no borra: solo avisa.
+    if (req.body?.confirmar !== true) {
+      return res.status(400).json({
+        error: "Esta prueba BORRA todos los pedidos, cierres, monederos e historial de precios reales y los reemplaza por datos de ejemplo. Si es lo que quieres, vuelve a llamar con { \"confirmar\": true }.",
+      });
+    }
+    const respaldoId = await respaldarAntesDeBorrar("prueba de siembra (borra datos operativos)");
+
     // Reset/Clear relevant tables for a clean test state
     db.orders = [];
     db.closures = [];
     db.walletTransactions = [];
     db.priceHistory = [];
     await truncateTables(["orders", "closures", "wallet_transactions", "price_histories"]);
+    console.log(`[Test] Datos operativos reemplazados por prueba; respaldo previo #${respaldoId}.`);
 
     const branches = Object.keys(db.branchConfigs || {});
     const productsToUse = db.products.slice(0, 15);
