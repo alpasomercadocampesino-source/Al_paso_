@@ -48,12 +48,41 @@ const BACKUP_TABLES = [
 
 const BACKUPS_TO_KEEP = 30;
 
+/**
+ * Columnas de foto, que NO entran en los respaldos.
+ *
+ * Una foto de evidencia pesa más que todos los datos del día juntos, y el
+ * respaldo la copiaba entera en cada snapshot: con 30 guardados, la misma foto
+ * quedaba 30 veces. Eso hizo que los respaldos llegaran a ser el 75% de la base.
+ *
+ * El respaldo guarda los datos (montos, fechas, motivos, responsables); las
+ * fotos son soporte visual y se quedan solo en su tabla. Restaurar devuelve
+ * todo el dato y deja la foto vacía.
+ */
+const COLUMNAS_DE_FOTO: Record<string, string> = {
+  shrinkages: "foto",
+  closures: "foto_factura",
+  wallet_transactions: "foto_factura",
+};
+
+/** Columnas reales de una tabla, quitando la de foto si la tiene. */
+async function columnasSinFoto(tabla: string): Promise<string[]> {
+  const result = await pgDb.execute(
+    sql`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ${tabla} ORDER BY ordinal_position`
+  );
+  const rows: any[] = (result as any).rows ?? (result as any);
+  const excluir = COLUMNAS_DE_FOTO[tabla];
+  return rows.map((r) => r.column_name).filter((c) => c !== excluir);
+}
+
 export async function createBackup(motivo = "automatico"): Promise<{ id: number; resumen: Record<string, number> }> {
   const contenido: Record<string, any[]> = {};
   const resumen: Record<string, number> = {};
 
   for (const t of BACKUP_TABLES) {
-    const result = await pgDb.execute(sql`SELECT * FROM ${sql.identifier(t)}`);
+    const cols = await columnasSinFoto(t);
+    const lista = sql.join(cols.map((c) => sql.identifier(c)), sql.raw(", "));
+    const result = await pgDb.execute(sql`SELECT ${lista} FROM ${sql.identifier(t)}`);
     const rows: any[] = (result as any).rows ?? (result as any);
     contenido[t] = rows;
     resumen[t] = rows.length;

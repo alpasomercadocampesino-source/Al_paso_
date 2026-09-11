@@ -114,6 +114,24 @@ async function saveDb(dbData: DatabaseSchema, only?: CollectionKey[]) {
   await originalSaveDb(dbData, only);
 }
 
+/**
+ * Tope de peso para una foto guardada en la base.
+ *
+ * El navegador ya las reduce a ~900 px antes de enviarlas (src/utils/imagen.ts)
+ * y quedan en unas decenas de KB. Este tope es la red por si algo se salta esa
+ * compresión: sin él, una foto de celular sin tocar (3 a 10 MB) entra entera,
+ * hincha la base y vuelve lento cada guardado.
+ */
+const FOTO_MAXIMA_KB = 400;
+
+/** Devuelve un mensaje de error si la foto excede el tope, o null si está bien. */
+function revisarFoto(foto: any): string | null {
+  if (!foto || typeof foto !== "string") return null;
+  const kb = Math.round(foto.length / 1024);
+  if (kb <= FOTO_MAXIMA_KB) return null;
+  return `La foto pesa ${kb} KB y el máximo es ${FOTO_MAXIMA_KB} KB. Vuelva a tomarla desde la aplicación para que se comprima sola.`;
+}
+
 function parseQty(q: any): number {
   if (!q) return 0;
   const cleaned = String(q).trim().replace(",", ".").replace(/\s+/g, " ");
@@ -942,6 +960,8 @@ app.post("/api/closures", async (req, res) => {
     if (!puedeVerSucursal(req, Sucursal)) {
       return res.status(403).json({ error: "No puedes registrar cierres de esta sucursal." });
     }
+    const fotoCierre = revisarFoto(Foto_Factura);
+    if (fotoCierre) return res.status(400).json({ error: fotoCierre });
 
     const closureDate = Fecha || getColombiaDate();
     const collector = Persona_Recogio && String(Persona_Recogio).trim() ? String(Persona_Recogio).trim() : "Hamilton";
@@ -1409,6 +1429,8 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
   if (!puedeVerSucursal(req, branch)) {
     return res.status(403).json({ error: "No puedes registrar movimientos de este monedero." });
   }
+  const fotoGasto = revisarFoto(Foto_Factura);
+  if (fotoGasto) return res.status(400).json({ error: fotoGasto });
   const valorGasto = Number(Valor_Gasto);
   if (!Number.isFinite(valorGasto) || valorGasto <= 0) {
     return res.status(400).json({ error: "El valor del gasto debe ser un número mayor a cero." });
@@ -1571,6 +1593,8 @@ app.post("/api/shrinkages", async (req, res) => {
   if (!puedeVerSucursal(req, Sucursal)) {
     return res.status(403).json({ error: "No puedes registrar mermas de esta sucursal." });
   }
+  const fotoMerma = revisarFoto(Foto);
+  if (fotoMerma) return res.status(400).json({ error: fotoMerma });
 
   const prod = db.products.find((p) => p.Codigo === Codigo);
   if (!prod) {

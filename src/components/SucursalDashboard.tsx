@@ -8,63 +8,12 @@ import { motion, AnimatePresence } from "motion/react";
 import { Product, Order, Shrinkage } from "../types";
 import { saveCachedProducts, getCachedProducts, queuePendingOrder, getPendingOrders, removePendingOrder } from "../utils/indexedDb";
 import { getColombiaDate } from "../utils/date";
+import { comprimirImagen } from "../utils/imagen";
 
 interface SucursalDashboardProps {
   branchName: string;
   lastGlobalSync?: number;
 }
-
-const compressAndSetImage = (file: File, callback: (base64: string) => void) => {
-  if (file.size > 20 * 1024 * 1024) {
-    alert("La imagen es demasiado grande. Por favor seleccione una de menos de 20MB.");
-    return;
-  }
-
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.7);
-          callback(compressedBase64);
-        } else {
-          callback(event.target?.result as string);
-        }
-      } catch (err) {
-        console.error("Error compressing image, falling back to original:", err);
-        callback(event.target?.result as string);
-      }
-    };
-    img.onerror = () => {
-      callback(event.target?.result as string);
-    };
-    img.src = event.target?.result as string;
-  };
-  reader.readAsDataURL(file);
-};
 
 export default function SucursalDashboard({ branchName, lastGlobalSync }: SucursalDashboardProps) {
   const [activeTab, setActiveTab] = useState<"pedido" | "merma" | "cierre" | "monedero" | "rectificacion">("pedido");
@@ -149,7 +98,7 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      compressAndSetImage(file, (compressedBase64) => {
+      comprimirImagen(file, (compressedBase64) => {
         setMermaFoto(compressedBase64);
       });
     }
@@ -1861,7 +1810,7 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
-                            compressAndSetImage(file, (compressedBase64) => {
+                            comprimirImagen(file, (compressedBase64) => {
                               setClosurePhoto(compressedBase64);
                             });
                           }
@@ -2043,7 +1992,7 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
-                            compressAndSetImage(file, (compressedBase64) => {
+                            comprimirImagen(file, (compressedBase64) => {
                               setWalletExpPhoto(compressedBase64);
                             });
                           }
