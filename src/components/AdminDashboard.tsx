@@ -19,6 +19,7 @@ import {
   getBranchPendingCount as getBranchPendingCountUtil,
   DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
+import { getColombiaDate, nombreDeMes } from "../utils/date";
 import {
   ResponsiveContainer,
   LineChart,
@@ -2483,12 +2484,52 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [packAssetType, setPackAssetType] = useState<"Canastilla" | "Estiva">("Canastilla");
   const [packNotesText, setPackNotesText] = useState("");
 
+  // ── Conciliación de efectivo: mes seleccionado ──────────────────────────
+  // "" = todos los meses. Se arranca en el mes en curso, que es lo que casi
+  // siempre se está mirando.
+  const [mesConciliacion, setMesConciliacion] = useState<string>(() => getColombiaDate().slice(0, 7));
+
+  const mesesConciliacion = Array.from(
+    new Set([
+      getColombiaDate().slice(0, 7),
+      ...closures.map((c) => (c?.Fecha || "").slice(0, 7)),
+      ...walletTxs.map((t) => (t?.Fecha || "").slice(0, 7)),
+    ].filter((m) => m && m.length === 7))
+  ).sort().reverse();
+
+  const delMes = <T extends { Fecha?: string }>(lista: T[]) =>
+    mesConciliacion ? lista.filter((x) => (x?.Fecha || "").startsWith(mesConciliacion)) : lista;
+
+  // Un saldo no es un movimiento: el de la Caja General se acumula desde el
+  // principio hasta el final del mes elegido, no solo dentro de él.
+  const hastaFinDeMes = <T extends { Fecha?: string }>(lista: T[]) =>
+    mesConciliacion ? lista.filter((x) => (x?.Fecha || "") <= mesConciliacion + "-31") : lista;
+
+  const cierresMes = delMes(closures);
+  const txsMes = delMes(walletTxs);
+  const nominaMes = delMes(payroll);
+
+  const esCentral = (t: any) => {
+    const x = (t?.Sucursal || "").toLowerCase().trim();
+    return x.includes("central") || x.includes("nequi");
+  };
+  const entradasMes = txsMes.filter((t) => esCentral(t) && t.Tipo_Movimiento === "Ingreso")
+    .reduce((a, t) => a + (t.Valor || 0), 0);
+  const salidasMes = txsMes.filter((t) => esCentral(t) && t.Tipo_Movimiento === "Gasto")
+    .reduce((a, t) => a + (t.Valor || 0), 0);
+
   // Derived metrics for Reconciliation using unified single source of truth
-  const reconciledClosuresSum = calculateReconciledClosuresSum(closures);
-  const paidPayrollSum = calculatePaidPayrollSum(payroll);
-  const nequiCentralBalance = calculateCentralBalance(closures, payroll, walletTxs);
+  const reconciledClosuresSum = calculateReconciledClosuresSum(cierresMes);
+  const paidPayrollSum = calculatePaidPayrollSum(nominaMes);
+  const nequiCentralBalance = calculateCentralBalance(
+    hastaFinDeMes(closures),
+    hastaFinDeMes(payroll),
+    hastaFinDeMes(walletTxs)
+  );
+  // El efectivo en tienda es de ahora, no de un mes: lo pendiente de agosto
+  // sigue estando en la caja hoy.
   const totalNoRecaudado = calculateTotalUncollected(closures, walletTxs, sucursalesPermitidas);
-  const totalStoreExpenses = closures.reduce((acc, c) => acc + (c.Gastos_Extra || 0), 0);
+  const totalStoreExpenses = cierresMes.reduce((acc, c) => acc + (c.Gastos_Extra || 0), 0);
 
   const branches = sucursalesPermitidas;
 
@@ -6866,20 +6907,50 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
         {/* 7. EFECTIVO & MONEDERO GENERAL */}
         {adminMode === "reconciliation" && (
           <div className="max-w-7xl mx-auto px-4 md:px-6 space-y-6">
-            <h3 className="text-xl font-bold text-slate-850">Conciliación de Efectivo y Monedero General</h3>
-            <p className="text-slate-500 text-xs mt-1">Monitoree el fondo líquido unificado ("Caja Central") versus el dinero aún depositado físicamente en los puntos de venta de cada municipio.</p>
+            <div className="flex flex-wrap justify-between items-end gap-3">
+              <div>
+                <h3 className="text-xl font-bold text-slate-850">Conciliación de Efectivo y Monedero General</h3>
+                <p className="text-slate-500 text-xs mt-1">Monitoree el fondo líquido unificado ("Caja Central") versus el dinero aún depositado físicamente en los puntos de venta de cada municipio.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">Mes</label>
+                <select
+                  value={mesConciliacion}
+                  onChange={(e) => setMesConciliacion(e.target.value)}
+                  className="px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none transition cursor-pointer"
+                >
+                  <option value="">Todos los meses</option>
+                  {mesesConciliacion.map((m) => (
+                    <option key={m} value={m}>{nombreDeMes(m)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
             {/* LIVE POOL METRICS GRID */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between">
                 <div>
                   <span className="text-slate-400 text-xs font-bold uppercase tracking-wider block">Caja General / Monedero</span>
-                  <h3 className="text-3xl font-black text-emerald-700 mt-2">{cop(nequiCentralBalance)}</h3>
-                  <p className="text-slate-500 text-[11px] mt-2">Fondos reales recibidos centralmente y listos para giros de plaza o pagos corporativos.</p>
+                  <h3 className={`text-3xl font-black mt-2 ${nequiCentralBalance < 0 ? "text-rose-600" : "text-emerald-700"}`}>{cop(nequiCentralBalance)}</h3>
+                  <p className="text-slate-500 text-[11px] mt-2">
+                    Fondos reales recibidos centralmente y listos para giros de plaza o pagos corporativos.
+                    {mesConciliacion && <span className="block mt-1 text-slate-400">Saldo al cierre de {nombreDeMes(mesConciliacion)}, arrastrando los meses anteriores.</span>}
+                  </p>
                 </div>
-                <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-                  <span>Recaudación Física Acumulada:</span>
-                  <span className="font-bold text-slate-850">{cop(reconciledClosuresSum)}</span>
+                <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5 text-xs text-slate-500">
+                  <div className="flex justify-between items-center">
+                    <span>Entró en el mes:</span>
+                    <span className="font-bold text-emerald-700">+{cop(entradasMes)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Salió en el mes:</span>
+                    <span className="font-bold text-rose-600">-{cop(salidasMes)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
+                    <span>Recogido de las tiendas:</span>
+                    <span className="font-bold text-slate-850">{cop(reconciledClosuresSum)}</span>
+                  </div>
                 </div>
               </div>
 
@@ -6887,7 +6958,10 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 <div>
                   <span className="text-slate-400 text-xs font-bold uppercase tracking-wider block text-amber-600">Efectivo Acumulado / No Recaudado</span>
                   <h3 className="text-3xl font-black text-slate-800 mt-2">{cop(totalNoRecaudado)}</h3>
-                  <p className="text-slate-500 text-[11px] mt-2">Efectivo total en tránsito resguardado físicamente en las cajas registradoras de las tiendas.</p>
+                  <p className="text-slate-500 text-[11px] mt-2">
+                    Efectivo total en tránsito resguardado físicamente en las cajas registradoras de las tiendas.
+                    <span className="block mt-1 text-slate-400">Es el pendiente de hoy, de todos los meses: lo que quedó sin recoger en agosto sigue en la caja.</span>
+                  </p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
                   <span>Sueldos Pagados desde Caja:</span>
@@ -6903,7 +6977,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 </div>
                 <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
                   <span>Cierres Procesados:</span>
-                  <span className="font-bold text-slate-850">{closures.length} días</span>
+                  <span className="font-bold text-slate-850">{cierresMes.length} días</span>
                 </div>
               </div>
             </div>
@@ -6913,7 +6987,10 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
               <h4 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                 <span>🏪 Balance Físico en Tiendas y Confirmación de Recolección</span>
               </h4>
-              <p className="text-slate-400 text-xs mb-6">Autorice la recolección física de efectivo por parte del transportador de plaza. Al presionar el botón, el dinero acumulado en la tienda se descarga y se transfiere al saldo del Monedero General.</p>
+              <p className="text-slate-400 text-xs mb-6">
+                Autorice la recolección física de efectivo por parte del transportador de plaza. Al presionar el botón, el dinero acumulado en la tienda se descarga y se transfiere al saldo del Monedero General.
+                <span className="block mt-1 text-slate-400">Este panel no se filtra por mes: muestra todo lo que está pendiente de recoger hasta hoy.</span>
+              </p>
               
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 {branches.map((bName) => {
@@ -7046,7 +7123,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
               <p className="text-slate-400 text-xs mb-6">Detalle auditable de fondos retenidos directamente en la sucursal antes de autorizar la recolección física.</p>
 
               <div className="overflow-x-auto">
-                {closures.filter(c => c.Gastos_Extra > 0).length === 0 ? (
+                {cierresMes.filter(c => c.Gastos_Extra > 0).length === 0 ? (
                   <p className="text-slate-400 text-xs italic text-center py-10">No se registran gastos de caja menor en los cierres de caja actuales.</p>
                 ) : (
                   <table className="w-full text-left text-xs border-collapse">
@@ -7061,7 +7138,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       </tr>
                     </thead>
                     <tbody>
-                      {closures.filter(c => c.Gastos_Extra > 0).map((c, idx) => (
+                      {cierresMes.filter(c => c.Gastos_Extra > 0).map((c, idx) => (
                         <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition">
                           <td className="py-2.5 px-2 text-slate-500 font-medium">{c.Fecha}</td>
                           <td className="py-2.5 px-2 font-bold text-slate-800">{c.Sucursal}</td>

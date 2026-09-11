@@ -18,3 +18,21 @@ export function getColombiaYesterdayDate(): string {
   const colTime = new Date(d.getTime() - 5 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000);
   return colTime.toISOString().split("T")[0];
 }
+
+const MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+/**
+ * Convierte "2026-09" en "Septiembre 2026", para mostrarlo en pantalla.
+ * Se arma con los números del texto, sin pasar por Date, porque construir una
+ * fecha desde un día 01 la corre al mes anterior en la zona de Colombia.
+ */
+export function nombreDeMes(mes: string): string {
+  if (!mes || mes.length < 7) return mes || "";
+  const anio = mes.slice(0, 4);
+  const indice = Number(mes.slice(5, 7)) - 1;
+  if (indice < 0 || indice > 11) return mes;
+  return `${MESES[indice]} ${anio}`;
+}
