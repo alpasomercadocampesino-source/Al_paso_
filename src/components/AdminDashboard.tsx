@@ -6940,11 +6940,11 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 </div>
                 <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5 text-xs text-slate-500">
                   <div className="flex justify-between items-center">
-                    <span>Entró en el mes:</span>
+                    <span>{mesConciliacion ? "Entró en el mes:" : "Entró en total:"}</span>
                     <span className="font-bold text-emerald-700">+{cop(entradasMes)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>Salió en el mes:</span>
+                    <span>{mesConciliacion ? "Salió en el mes:" : "Salió en total:"}</span>
                     <span className="font-bold text-rose-600">-{cop(salidasMes)}</span>
                   </div>
                   <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
