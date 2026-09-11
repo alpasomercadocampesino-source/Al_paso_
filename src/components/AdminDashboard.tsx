@@ -3689,7 +3689,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   </h3>
                   <p className="text-slate-500 text-xs mt-1">
                     {ultimaTanda
-                      ? <>Cambiados el {new Date(ultimaTanda).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}.</>
+                      ? <>{productosUltimaTanda === 1 ? "Cambiado" : "Cambiados"} el {new Date(ultimaTanda).toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" })}.</>
                       : <>Todavía no se ha cambiado ningún precio.</>}
                   </p>
                   <p className="text-slate-400 text-[11px] mt-1.5">
