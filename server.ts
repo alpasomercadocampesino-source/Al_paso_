@@ -1038,12 +1038,13 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
       db.walletTransactions[txIdx].Estado = isConfirmed ? "Reconciliado" : "Pendiente";
     }
 
-    // Al desmarcar hay que sacar del libro central la entrada que dejó la
-    // recolección. El saldo se lee del libro, así que si la entrada se queda,
-    // la plata sigue contada aunque el cierre vuelva a estar pendiente.
+    // Al desmarcar se saca del libro tanto la entrada al monedero central como
+    // la salida del monedero de la sucursal. El saldo se lee del libro, así que
+    // si quedaran, la plata seguiría contada con el cierre otra vez pendiente.
     if (!isConfirmed) {
       const sobrante = db.walletTransactions.filter(
-        (t) => t && String(t.Sucursal || "") === "Central / Nequi" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
+        (t) => t && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre) &&
+          (String(t.Sucursal || "") === "Central / Nequi" || norm(t.Sucursal) === norm(updatedClosure.Sucursal))
       );
       for (const t of sobrante) {
         db.walletTransactions.splice(db.walletTransactions.indexOf(t), 1);
@@ -1054,6 +1055,7 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
     // Record entry in Central / Nequi when confirmed
     if (isConfirmed && netVal > 0) {
       const today = getColombiaDate();
+      const quienRecoge = req.auth?.u || "Admin / Comprador";
       const centralTxIdx = db.walletTransactions.findIndex(
         (t) => t && String(t.Sucursal || "") === "Central / Nequi" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
       );
@@ -1065,10 +1067,26 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
           Tipo_Movimiento: "Ingreso",
           Valor: netVal,
           Descripcion: `Recolección Física Autorizada - ${updatedClosure.Sucursal} (${updatedClosure.Fecha}) [${updatedClosure.ID_Cierre}]`,
-          Responsable: "Admin / Comprador",
+          Responsable: quienRecoge,
           Estado: "Reconciliado"
         };
         db.walletTransactions.push(centralTx);
+
+        // La salida queda también en el monedero de la sucursal. Antes el retiro
+        // solo se veía en la caja central, así que desde la tienda el dinero
+        // desaparecía del saldo sin ninguna línea que dijera quién lo sacó.
+        // Va como "Reconciliado" a propósito: el pendiente ya se descuenta del
+        // cierre, y contarlo aquí otra vez lo restaría dos veces.
+        db.walletTransactions.push({
+          ID_Transaccion: genRecordId("TXN", updatedClosure.Sucursal, today),
+          Fecha: today,
+          Sucursal: updatedClosure.Sucursal,
+          Tipo_Movimiento: "Gasto",
+          Valor: netVal,
+          Descripcion: `Retiro de efectivo hacia Caja Central - recogió ${quienRecoge} (cierre del ${updatedClosure.Fecha}) [${updatedClosure.ID_Cierre}]`,
+          Responsable: quienRecoge,
+          Estado: "Reconciliado"
+        });
       }
     }
 
@@ -1158,6 +1176,7 @@ app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "
 
     // Add a transaction representing this cash pickup to the Central Bank Ledger / general Nequi
     const today = getColombiaDate();
+    const quienRecoge = req.auth?.u || "Admin / Comprador";
     const newTx: WalletTransaction = {
       ID_Transaccion: genRecordId("TXN", "CENTRAL", today),
       Fecha: today,
@@ -1167,10 +1186,29 @@ app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "
       Descripcion: isPartial
         ? `Recolección Física Parcial Autorizada - ${Sucursal}`
         : `Recolección Física Autorizada - ${Sucursal}`,
-      Responsable: "Admin (Cris)",
+      Responsable: quienRecoge,
       Estado: "Reconciliado"
     };
     db.walletTransactions.push(newTx);
+
+    // La salida queda también en el monedero de la sucursal, con el nombre de
+    // quien la recogió. Antes el retiro solo se veía en la caja central: desde
+    // la tienda el dinero bajaba del saldo sin ninguna línea que lo explicara.
+    // Va como "Reconciliado" porque el pendiente ya se descuenta del cierre.
+    if (customCollected > 0) {
+      db.walletTransactions.push({
+        ID_Transaccion: genRecordId("TXN", String(Sucursal), today),
+        Fecha: today,
+        Sucursal: String(Sucursal).trim(),
+        Tipo_Movimiento: "Gasto",
+        Valor: customCollected,
+        Descripcion: isPartial
+          ? `Retiro parcial de efectivo hacia Caja Central - recogió ${quienRecoge}`
+          : `Retiro de efectivo hacia Caja Central - recogió ${quienRecoge}`,
+        Responsable: quienRecoge,
+        Estado: "Reconciliado"
+      });
+    }
 
     await saveDb(db, ["closures", "walletTransactions"]);
 
@@ -1442,12 +1480,29 @@ app.delete("/api/wallet/transaction/:id", requireRole("Admin"), async (req, res)
 
   db.walletTransactions.splice(idx, 1);
   await deleteRowByClientId("wallet_transactions", (tx as any)._id);
+
+  // Una recolección deja dos líneas: la entrada a la caja central y la salida
+  // del monedero de la sucursal. Se borran juntas, o el libro de la tienda
+  // seguiría mostrando un retiro que ya no existe.
+  let parejaBorrada = 0;
+  if (cierreLiberado) {
+    const pareja = db.walletTransactions.filter(
+      (t) => t && String(t.Descripcion || "").includes(cierreLiberado as string)
+    );
+    for (const t of pareja) {
+      db.walletTransactions.splice(db.walletTransactions.indexOf(t), 1);
+      await deleteRowByClientId("wallet_transactions", (t as any)._id);
+      parejaBorrada++;
+    }
+  }
+
   await saveDb(db, cierreLiberado ? ["walletTransactions", "closures"] : ["walletTransactions"]);
 
   res.json({
     success: true,
     borrado: { id: tx.ID_Transaccion, valor: tx.Valor, tipo: tx.Tipo_Movimiento, descripcion: tx.Descripcion },
     cierreLiberado,
+    movimientosLigadosBorrados: parejaBorrada,
   });
 });
 

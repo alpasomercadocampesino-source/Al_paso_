@@ -156,7 +156,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     return () => { vivo = false; };
   }, [sucursalAsignada]);
   const [adminMode, setAdminMode] = useState<
-    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas" | "precios_nuevos"
+    "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas" | "precios_nuevos" | "wallet_history"
   >("master");
 
   // Sync Logs state
@@ -325,6 +325,16 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // Selected supplier for packaging ledger filter
   const [selectedSupplier, setSelectedSupplier] = useState("");
+
+  // ── Historial de monederos ──────────────────────────────────────────────
+  // Libro de movimientos de cada monedero: entradas de los cierres, gastos de
+  // caja menor y los retiros hacia la caja central, con el nombre de quien los
+  // hizo. Es el rastro para responder "¿quién sacó esta plata y cuándo?".
+  const [histMonederoSucursal, setHistMonederoSucursal] = useState<string>(sucursalAsignada || "");
+  const [histMonederoDesde, setHistMonederoDesde] = useState<string>("");
+  const [histMonederoHasta, setHistMonederoHasta] = useState<string>("");
+  const [histMonederoTipo, setHistMonederoTipo] = useState<"todos" | "Ingreso" | "Gasto">("todos");
+  const [histMonederoOrden, setHistMonederoOrden] = useState<"reciente" | "antiguo">("reciente");
 
   // Selected closure for Printable Receipt modal
   const [activeReceipt, setActiveReceipt] = useState<DailyClosure | null>(null);
@@ -3685,6 +3695,16 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
             >
               <AlertTriangle className="w-3.5 h-3.5 text-rose-300" />
               Mermas
+            </button>
+
+            <button
+              onClick={() => setAdminMode("wallet_history")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                adminMode === "wallet_history" ? "bg-emerald-500 text-slate-950 font-extrabold" : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 text-amber-300" />
+              Historial Monederos
             </button>
 
             {/* Gestión de usuarios y logs son de alcance global: el servidor solo se
@@ -9012,6 +9032,268 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
             </div>
           </div>
         )}
+
+        {/* HISTORIAL DE MONEDEROS: el libro de cada sucursal, movimiento por
+            movimiento, incluidos los retiros hacia la caja central. */}
+        {adminMode === "wallet_history" && (() => {
+          const norm = (x: any) => String(x || "").toLowerCase().trim();
+          const sucursalElegida = histMonederoSucursal;
+
+          const movimientos = walletTxs
+            .filter((t) => {
+              if (!t) return false;
+              if (sucursalElegida && norm(t.Sucursal) !== norm(sucursalElegida)) return false;
+              if (histMonederoDesde && (t.Fecha || "") < histMonederoDesde) return false;
+              if (histMonederoHasta && (t.Fecha || "") > histMonederoHasta) return false;
+              if (histMonederoTipo !== "todos" && t.Tipo_Movimiento !== histMonederoTipo) return false;
+              return true;
+            });
+
+          // El saldo corriente solo tiene sentido leyendo en orden cronológico,
+          // así que se calcula de viejo a nuevo y después se invierte si hace falta.
+          const cronologico = [...movimientos].sort((a, b) => {
+            const f = (a.Fecha || "").localeCompare(b.Fecha || "");
+            return f !== 0 ? f : (a.ID_Transaccion || "").localeCompare(b.ID_Transaccion || "");
+          });
+          let acumulado = 0;
+          const conSaldo = cronologico.map((t) => {
+            acumulado += t.Tipo_Movimiento === "Ingreso" ? t.Valor : -t.Valor;
+            return { ...t, saldoCorriente: acumulado };
+          });
+          const listado = histMonederoOrden === "reciente" ? [...conSaldo].reverse() : conSaldo;
+
+          const entradas = movimientos.filter((t) => t.Tipo_Movimiento === "Ingreso").reduce((a, t) => a + (t.Valor || 0), 0);
+          const salidas = movimientos.filter((t) => t.Tipo_Movimiento === "Gasto").reduce((a, t) => a + (t.Valor || 0), 0);
+          const retiros = movimientos.filter((t) => t.Tipo_Movimiento === "Gasto" && /Retiro de efectivo|Retiro parcial/i.test(t.Descripcion || ""));
+          const totalRetirado = retiros.reduce((a, t) => a + (t.Valor || 0), 0);
+
+          const exportarMonederosXLSX = () => {
+            const filas = conSaldo.map((t) => ({
+              "FECHA": t.Fecha,
+              "MONEDERO": t.Sucursal,
+              "TIPO": t.Tipo_Movimiento,
+              "ENTRADA": t.Tipo_Movimiento === "Ingreso" ? t.Valor : "",
+              "SALIDA": t.Tipo_Movimiento === "Gasto" ? t.Valor : "",
+              "SALDO": t.saldoCorriente,
+              "DESCRIPCION": t.Descripcion || "",
+              "RESPONSABLE": t.Responsable || "",
+              "ESTADO": t.Estado === "Reconciliado" ? "Confirmado" : "Pendiente",
+              "ID MOVIMIENTO": t.ID_Transaccion || "",
+            }));
+            if (filas.length === 0) {
+              setErrorMsg("No hay movimientos para exportar con los filtros actuales.");
+              return;
+            }
+            const hoja = XLSX.utils.json_to_sheet(filas);
+            hoja["!cols"] = [
+              { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 14 }, { wch: 14 },
+              { wch: 16 }, { wch: 58 }, { wch: 20 }, { wch: 13 }, { wch: 42 },
+            ];
+            const libro = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(libro, hoja, "Monederos");
+            const nombre = sucursalElegida ? sucursalElegida.replace(/[^\w]/g, "_") : "Todos";
+            XLSX.writeFile(libro, `Historial_Monederos_${nombre}_${getColombiaDate()}.xlsx`);
+          };
+
+          return (
+            <div className="max-w-7xl mx-auto px-4 md:px-6 space-y-6 animate-fade-in">
+              <div>
+                <h3 className="text-xl font-bold text-slate-850">Historial de Monederos por Sucursal</h3>
+                <p className="text-slate-500 text-xs mt-1">
+                  Cada movimiento del monedero de cada punto: lo que entró por los cierres, los gastos de caja menor y
+                  los retiros hacia la caja central, con el nombre de quien los hizo.
+                </p>
+              </div>
+
+              {/* FILTROS Y EXPORTACIÓN */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Monedero</label>
+                    <select
+                      value={histMonederoSucursal}
+                      onChange={(e) => setHistMonederoSucursal(e.target.value)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-emerald-400"
+                    >
+                      {!esAdminDeUnaSucursal && <option value="">Todos los monederos</option>}
+                      {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+                      {/* El monedero central consolida todas las sucursales, así que
+                          no se ofrece a un administrador de una sola. */}
+                      {!esAdminDeUnaSucursal && <option value="Central / Nequi">Central / Nequi</option>}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Desde</label>
+                    <input
+                      type="date"
+                      value={histMonederoDesde}
+                      onChange={(e) => setHistMonederoDesde(e.target.value)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hasta</label>
+                    <input
+                      type="date"
+                      value={histMonederoHasta}
+                      onChange={(e) => setHistMonederoHasta(e.target.value)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tipo</label>
+                    <select
+                      value={histMonederoTipo}
+                      onChange={(e) => setHistMonederoTipo(e.target.value as any)}
+                      className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-emerald-400"
+                    >
+                      <option value="todos">Entradas y salidas</option>
+                      <option value="Ingreso">Solo entradas</option>
+                      <option value="Gasto">Solo salidas</option>
+                    </select>
+                  </div>
+                  {(histMonederoDesde || histMonederoHasta || histMonederoTipo !== "todos" || (histMonederoSucursal && !esAdminDeUnaSucursal)) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistMonederoDesde("");
+                        setHistMonederoHasta("");
+                        setHistMonederoTipo("todos");
+                        if (!esAdminDeUnaSucursal) setHistMonederoSucursal("");
+                      }}
+                      className="px-3 py-2 text-xs text-rose-500 hover:underline font-bold cursor-pointer"
+                    >
+                      Limpiar filtros
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={exportarMonederosXLSX}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs shrink-0"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Exportar a Excel (.xlsx)
+                </button>
+              </div>
+
+              {/* RESUMEN DEL PERIODO */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block">Entradas</span>
+                  <p className="text-2xl font-black text-emerald-700 mt-1 font-mono">{cop(entradas)}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block">Salidas</span>
+                  <p className="text-2xl font-black text-rose-600 mt-1 font-mono">{cop(salidas)}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block">Retirado a Caja Central</span>
+                  <p className="text-2xl font-black text-slate-800 mt-1 font-mono">{cop(totalRetirado)}</p>
+                  <p className="text-slate-400 text-[10px] mt-1">{retiros.length} {retiros.length === 1 ? "retiro" : "retiros"}</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block">Movimientos</span>
+                  <p className="text-2xl font-black text-slate-800 mt-1 font-mono">{movimientos.length}</p>
+                </div>
+              </div>
+
+              {/* LIBRO DE MOVIMIENTOS */}
+              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex flex-wrap justify-between items-center gap-3">
+                  <h4 className="font-black text-slate-800 text-xs uppercase tracking-wider">
+                    {sucursalElegida ? `Movimientos de ${sucursalElegida}` : "Movimientos de todos los monederos"}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setHistMonederoOrden((o) => (o === "reciente" ? "antiguo" : "reciente"))}
+                    className="text-[11px] font-bold text-slate-500 hover:text-slate-800 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    {histMonederoOrden === "reciente" ? "Más reciente primero" : "Más antiguo primero"}
+                    {histMonederoOrden === "reciente" ? <ArrowDown className="w-3 h-3" /> : <ArrowUp className="w-3 h-3" />}
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  {listado.length === 0 ? (
+                    <p className="text-slate-400 text-xs italic text-center py-20">No hay movimientos con los filtros seleccionados.</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                          <th className="py-3 px-3">Fecha</th>
+                          {!sucursalElegida && <th className="py-3 px-3">Monedero</th>}
+                          <th className="py-3 px-3">Tipo</th>
+                          <th className="py-3 px-3 text-right">Entrada</th>
+                          <th className="py-3 px-3 text-right">Salida</th>
+                          <th className="py-3 px-3 text-right">Saldo</th>
+                          <th className="py-3 px-3 min-w-[260px]">Descripción</th>
+                          <th className="py-3 px-3">Responsable</th>
+                          <th className="py-3 px-3">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {listado.map((t: any, idx: number) => {
+                          const esRetiro = /Retiro de efectivo|Retiro parcial/i.test(t.Descripcion || "");
+                          return (
+                            <tr key={t.ID_Transaccion || idx} className={`border-b border-slate-100 hover:bg-slate-50/60 transition ${esRetiro ? "bg-amber-50/40" : ""}`}>
+                              <td className="py-2.5 px-3 text-slate-500 font-semibold whitespace-nowrap">{t.Fecha}</td>
+                              {!sucursalElegida && <td className="py-2.5 px-3 font-bold text-slate-800 whitespace-nowrap">{t.Sucursal}</td>}
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] whitespace-nowrap ${
+                                  esRetiro
+                                    ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                    : t.Tipo_Movimiento === "Ingreso"
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-150"
+                                      : "bg-rose-50 text-rose-700 border border-rose-150"
+                                }`}>
+                                  {esRetiro ? "Retiro" : t.Tipo_Movimiento}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
+                                {t.Tipo_Movimiento === "Ingreso" ? cop(t.Valor) : "—"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-600 whitespace-nowrap">
+                                {t.Tipo_Movimiento === "Gasto" ? cop(t.Valor) : "—"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700 whitespace-nowrap">{cop(t.saldoCorriente)}</td>
+                              <td className="py-2.5 px-3 text-slate-600">
+                                <div className="flex items-start gap-1.5">
+                                  <span>{t.Descripcion}</span>
+                                  {t.Foto_Factura && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingPhotoUrl(t.Foto_Factura)}
+                                      title="Ver factura o soporte"
+                                      className="p-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-150 rounded-lg inline-flex items-center justify-center cursor-pointer transition shrink-0"
+                                    >
+                                      <Camera className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap">{t.Responsable}</td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap ${
+                                  t.Estado === "Reconciliado"
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-150"
+                                    : "bg-amber-50 text-amber-700 border border-amber-150"
+                                }`}>
+                                  {t.Estado === "Reconciliado" ? "Confirmado" : "Pendiente"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* MERMAS: recuento del mes por producto */}
         {adminMode === "mermas" && (
