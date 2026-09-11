@@ -116,6 +116,15 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [sucursalesDelServidor, setSucursalesDelServidor] = useState<string[]>(DEFAULT_BRANCHES);
   const sucursalesPermitidas = sucursalAsignada ? [sucursalAsignada] : sucursalesDelServidor;
 
+  // Los pedidos son la excepción al aislamiento: la compra se hace de una sola
+  // vez en la plaza para todo el negocio, así que las planillas de compra
+  // muestran también las sucursales con administrador propio. El dinero de esas
+  // sucursales — caja, monedero, nómina — sigue usando sucursalesPermitidas.
+  const [sucursalesDePedidosServidor, setSucursalesDePedidosServidor] = useState<string[]>([]);
+  const sucursalesDePedidos = sucursalAsignada
+    ? [sucursalAsignada]
+    : (sucursalesDePedidosServidor.length > 0 ? sucursalesDePedidosServidor : sucursalesDelServidor);
+
   // Ejemplo del pegado de pedidos: una columna por sucursal, en el mismo orden
   // en que el servidor las lee. Solo se muestra al administrador general.
   const ejemploCsvAdmin = [
@@ -128,11 +137,18 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     let vivo = true;
     (async () => {
       try {
-        const res = await fetch("/api/admin/branch-configs");
+        const [res, resPedidos] = await Promise.all([
+          fetch("/api/admin/branch-configs"),
+          fetch("/api/admin/branch-configs?ambito=pedidos"),
+        ]);
         if (!res.ok) return; // se conserva la lista por defecto
         const cfg = await res.json();
         const nombres = Object.keys(cfg || {});
         if (vivo && nombres.length > 0) setSucursalesDelServidor(nombres);
+        if (resPedidos.ok) {
+          const dePedidos = Object.keys((await resPedidos.json()) || {});
+          if (vivo && dePedidos.length > 0) setSucursalesDePedidosServidor(dePedidos);
+        }
       } catch {
         /* sin red: se sigue con la lista por defecto */
       }
@@ -1992,19 +2008,19 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       // Cantidad pedida por sucursal. Se arma desde la lista de sucursales activas
       // (no de nombres escritos a mano) para que una sucursal nueva aparezca sola.
       const cantidadPorSucursal: Record<string, string> = {};
-      for (const b of sucursalesPermitidas) cantidadPorSucursal[b] = "-";
+      for (const b of sucursalesDePedidos) cantidadPorSucursal[b] = "-";
 
       prodOrders.forEach((o) => {
         const branch = o.Sucursal.trim().toLowerCase();
-        const match = sucursalesPermitidas.find((b) => b.toLowerCase() === branch);
+        const match = sucursalesDePedidos.find((b) => b.toLowerCase() === branch);
         if (match) cantidadPorSucursal[match] = String(o.Cantidad);
       });
 
-      for (const b of sucursalesPermitidas) {
+      for (const b of sucursalesDePedidos) {
         if (edit[b] !== undefined) cantidadPorSucursal[b] = String(edit[b]);
       }
 
-      const requerido = sucursalesPermitidas.reduce(
+      const requerido = sucursalesDePedidos.reduce(
         (suma, b) => suma + parseQty(cantidadPorSucursal[b]),
         0
       );
@@ -2248,7 +2264,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
         "PRODUCTO": row.Producto,
       };
       // Una columna por sucursal, igual que en la tabla.
-      for (const b of sucursalesPermitidas) {
+      for (const b of sucursalesDePedidos) {
         fila[b.toUpperCase()] = (row as any)[b] ?? "-";
       }
       fila["PEDIDO"] = row.Pedido ? "SÍ" : "NO";
@@ -2269,7 +2285,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
     const ws = XLSX.utils.json_to_sheet(datos);
     const anchoFijo = [{ wch: 12 }, { wch: 10 }, { wch: 28 }];
-    const anchoSucursales = sucursalesPermitidas.map(() => ({ wch: 11 }));
+    const anchoSucursales = sucursalesDePedidos.map(() => ({ wch: 11 }));
     ws["!cols"] = [...anchoFijo, ...anchoSucursales, ...Array(13).fill({ wch: 14 })];
     // Fija el encabezado y las columnas de código/producto al desplazarse en Excel.
     ws["!freeze"] = { xSplit: 3, ySplit: 1 };
@@ -4220,7 +4236,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <thead className="sticky top-0 z-30 shadow-xs bg-white">
                     {/* Level 1 Headers: PEDIDO, PAGOS, PRECIO DE VENTA groups */}
                     <tr className="text-center font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
-                      <th colSpan={3 + sucursalesPermitidas.length} className="bg-rose-600 text-white py-2 px-3 border-r border-rose-700">
+                      <th colSpan={3 + sucursalesDePedidos.length} className="bg-rose-600 text-white py-2 px-3 border-r border-rose-700">
                         PEDIDO
                       </th>
                       <th colSpan={4} className="bg-amber-100 text-amber-900 py-2 px-3 border-r border-slate-300">
@@ -4253,7 +4269,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           {matrixSortField === "Producto" ? (matrixSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                         </div>
                       </th>
-                      {sucursalesPermitidas.map((b) => (
+                      {sucursalesDePedidos.map((b) => (
                         <th key={b} className="py-2.5 px-2 border-r border-slate-200 text-center w-16 uppercase">{b}</th>
                       ))}
 
@@ -4353,7 +4369,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           </td>
                           
                           {/* Una celda por sucursal activa */}
-                          {sucursalesPermitidas.map((b) => (
+                          {sucursalesDePedidos.map((b) => (
                             <td key={b} className="py-1.5 px-2 border-r border-slate-150 text-center">
                               <input
                                 type="text"
@@ -5961,7 +5977,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                               {paSortField === "proveedor" ? (paSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                             </div>
                           </th>
-                          {sucursalesPermitidas.map((b) => (
+                          {sucursalesDePedidos.map((b) => (
                             <th key={b} className="py-3 px-2 text-right">{b}</th>
                           ))}
                           <th 
@@ -6000,7 +6016,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                             }
                           } = {};
 
-                          const branches = sucursalesPermitidas;
+                          const branches = sucursalesDePedidos;
 
                           accountsOrders.forEach((o) => {
                             const prov = o.Proveedor || "Sin Proveedor";
@@ -6070,7 +6086,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                   )}
                                 </div>
                               </td>
-                              {sucursalesPermitidas.map((b) => (
+                              {sucursalesDePedidos.map((b) => (
                                 <td key={b} className="py-3.5 px-2 text-right font-mono text-slate-600">
                                   {summary.sucursales[b]?.real > 0 ? cop(summary.sucursales[b].real) : "—"}
                                 </td>
@@ -6176,7 +6192,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       const filtered = allOrdersForReport.filter(o => o.Fecha >= reportStartDate && o.Fecha <= reportEndDate);
                       
                       // Sheet 1: Resumen por sucursal
-                      const branches = sucursalesPermitidas;
+                      const branches = sucursalesDePedidos;
                       const branchTotals = branches.map(b => {
                         const branchOrders = filtered.filter(o => o.Sucursal.trim().toLowerCase() === b.toLowerCase());
                         const compradoReal = branchOrders.reduce((sum, o) => sum + (valorAPagarPedido(o)), 0);
@@ -6271,7 +6287,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
               const totalItemsComprados = filtered.filter(o => valorAPagarPedido(o) > 0).length;
 
               // Agrupar por sucursal
-              const branches = sucursalesPermitidas;
+              const branches = sucursalesDePedidos;
               const branchData: { [key: string]: { compradoReal: number; estimadoSolicitado: number; kilos: number; count: number } } = {};
               
               branches.forEach(b => {
@@ -6502,7 +6518,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                 {prSortField === "proveedor" ? (prSortDir === "asc" ? <ArrowUp className="w-3 h-3 text-emerald-600" /> : <ArrowDown className="w-3 h-3 text-emerald-600" />) : <ArrowUpDown className="w-3 h-3 text-slate-400" />}
                               </div>
                             </th>
-                            {sucursalesPermitidas.map((b) => (
+                            {sucursalesDePedidos.map((b) => (
                               <th
                                 key={b}
                                 onClick={() => togglePrSort(b)}
@@ -6528,7 +6544,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                             return (
                               <tr key={`${p.proveedor}-${idx}`} className="hover:bg-slate-50 transition text-[11px]">
                                 <td className="py-3 px-4 font-black text-slate-900">{p.proveedor}</td>
-                                {sucursalesPermitidas.map((b) => (
+                                {sucursalesDePedidos.map((b) => (
                                   <td key={b} className="py-3 px-2 text-right font-mono text-slate-550">
                                     {p.sucursales[b] > 0 ? cop(p.sucursales[b]) : "—"}
                                   </td>

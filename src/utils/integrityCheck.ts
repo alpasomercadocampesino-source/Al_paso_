@@ -1,4 +1,5 @@
 import { initOfflineDb } from "./indexedDb";
+import { ROLES } from "../types";
 
 export interface IntegrityReport {
   ok: boolean;
@@ -56,7 +57,7 @@ export async function runStorageIntegrityCheck(): Promise<IntegrityReport> {
   if (rawSession) {
     try {
       const parsed = JSON.parse(rawSession);
-      const validRoles = ["Admin", "Comprador", "Sucursal"];
+      const validRoles: readonly string[] = ROLES;
       if (
         !parsed ||
         typeof parsed !== "object" ||

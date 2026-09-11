@@ -39,8 +39,17 @@ function sucursalesConAdminPropio(): Set<string> {
   return set;
 }
 
-/** ¿Esta sesión puede ver los datos de esta sucursal? */
-function puedeVerSucursal(req: express.Request, sucursal: any): boolean {
+/**
+ * Ámbito de la consulta. "pedidos" es la excepción al aislamiento: la compra se
+ * hace de una sola vez en la plaza para todo el negocio, así que el
+ * administrador general necesita ver también lo que pide una sucursal con
+ * administrador propio. El dinero de esa sucursal — cierres, monedero, nómina —
+ * sigue siendo solo de ella.
+ */
+type Ambito = "pedidos" | undefined;
+
+/** ¿Esta sesión puede ver los datos de esta sucursal, en este ámbito? */
+function puedeVerSucursal(req: express.Request, sucursal: any, ambito?: Ambito): boolean {
   const sesion = req.auth;
   if (!sesion) return false;
   const suc = norm(sucursal);
@@ -53,6 +62,7 @@ function puedeVerSucursal(req: express.Request, sucursal: any): boolean {
     case "AdminSucursal":
       return suc === norm(sesion.s);
     case "Admin":
+      if (ambito === "pedidos") return true;
       return !sucursalesConAdminPropio().has(suc);
     default:
       return false;
@@ -60,13 +70,13 @@ function puedeVerSucursal(req: express.Request, sucursal: any): boolean {
 }
 
 /** Filtra una lista dejando solo los registros de sucursales visibles para la sesión. */
-function filtrarPorSucursal<T>(req: express.Request, lista: T[], obtenerSucursal: (item: T) => any): T[] {
+function filtrarPorSucursal<T>(req: express.Request, lista: T[], obtenerSucursal: (item: T) => any, ambito?: Ambito): T[] {
   if (!Array.isArray(lista)) return [];
   const sesion = req.auth;
   // Admin general sin sucursales aisladas y Comprador ven todo: se evita recorrer.
   if (sesion?.r === "Comprador") return lista;
-  if (sesion?.r === "Admin" && sucursalesConAdminPropio().size === 0) return lista;
-  return lista.filter((item) => item && puedeVerSucursal(req, obtenerSucursal(item)));
+  if (sesion?.r === "Admin" && (ambito === "pedidos" || sucursalesConAdminPropio().size === 0)) return lista;
+  return lista.filter((item) => item && puedeVerSucursal(req, obtenerSucursal(item), ambito));
 }
 
 // Rutas públicas: iniciar sesión y el chequeo de salud (que no expone datos).
@@ -238,9 +248,12 @@ app.get("/api/admin/branch-configs", async (req, res) => {
     await saveDb(db, ["branchConfigs"]);
   }
   // Cada sesión solo recibe la configuración de las sucursales que puede ver.
+  // Con ?ambito=pedidos el administrador general recibe también las sucursales
+  // con administrador propio, para armar las columnas de la planilla de compras.
+  const ambito: Ambito = req.query.ambito === "pedidos" ? "pedidos" : undefined;
   const visibles: { [branch: string]: any } = {};
   for (const [nombre, cfg] of Object.entries(db.branchConfigs)) {
-    if (puedeVerSucursal(req, nombre)) visibles[nombre] = cfg;
+    if (puedeVerSucursal(req, nombre, ambito)) visibles[nombre] = cfg;
   }
   res.json(visibles);
 });
@@ -469,7 +482,8 @@ app.get("/api/price-history", (req, res) => {
 // Orders (Pedidos)
 app.get("/api/orders", (req, res) => {
   const { sucursal, fecha } = req.query;
-  let filtered = filtrarPorSucursal(req, db.orders, (o) => o.Sucursal);
+  // Los pedidos se consolidan para todo el negocio: ver 'Ambito'.
+  let filtered = filtrarPorSucursal(req, db.orders, (o) => o.Sucursal, "pedidos");
 
   if (sucursal) {
     filtered = filtered.filter(

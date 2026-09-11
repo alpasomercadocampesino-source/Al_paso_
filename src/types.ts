@@ -1,4 +1,12 @@
-export type UserRole = "Admin" | "Comprador" | "Sucursal" | "AdminSucursal";
+/**
+ * Roles del sistema. La lista de valores va aparte del tipo porque hace falta
+ * en tiempo de ejecución (validar la sesión guardada). Tenerla en un solo sitio
+ * evita que se olvide un rol al agregarlo: cuando se creó "AdminSucursal" quedó
+ * fuera de esa validación y la sesión de ese administrador se borraba en cada
+ * recarga, obligándolo a entrar de nuevo.
+ */
+export const ROLES = ["Admin", "Comprador", "Sucursal", "AdminSucursal"] as const;
+export type UserRole = (typeof ROLES)[number];
 
 export interface User {
   Usuario: string;
