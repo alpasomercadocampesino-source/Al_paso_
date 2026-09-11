@@ -141,10 +141,46 @@ function parseQty(q: any): number {
 // Login Routing
 const isBcryptHash = (value: string) => /^\$2[aby]\$/.test(value);
 
+// Freno a la fuerza bruta. Las contraseñas del personal siguen un patrón
+// adivinable, y sin freno se pueden probar miles por minuto contra la
+// dirección pública. Se cuenta por usuario+IP y se olvida solo.
+const MAX_INTENTOS = 8;
+const VENTANA_INTENTOS_MS = 15 * 60 * 1000;
+const intentosFallidos = new Map<string, { n: number; hasta: number }>();
+
+function claveIntento(req: express.Request, usuario: string): string {
+  const reenviada = req.headers["x-forwarded-for"];
+  const ip = String(Array.isArray(reenviada) ? reenviada[0] : reenviada || req.socket.remoteAddress || "").split(",")[0].trim();
+  return `${ip}|${String(usuario || "").toLowerCase().trim()}`;
+}
+
+/** Minutos que faltan para poder reintentar, o 0 si no está frenado. */
+function minutosDeFreno(clave: string): number {
+  const e = intentosFallidos.get(clave);
+  if (!e) return 0;
+  if (Date.now() > e.hasta) { intentosFallidos.delete(clave); return 0; }
+  return e.n >= MAX_INTENTOS ? Math.ceil((e.hasta - Date.now()) / 60000) : 0;
+}
+
+function anotarFallo(clave: string) {
+  const e = intentosFallidos.get(clave);
+  const vigente = e && Date.now() <= e.hasta ? e.n : 0;
+  intentosFallidos.set(clave, { n: vigente + 1, hasta: Date.now() + VENTANA_INTENTOS_MS });
+}
+
+
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: "Usuario y contraseña requeridos" });
+  }
+
+  const clave = claveIntento(req, username);
+  const minutosRestantes = minutosDeFreno(clave);
+  if (minutosRestantes > 0) {
+    return res.status(429).json({
+      error: `Demasiados intentos fallidos. Intenta de nuevo en ${minutosRestantes} minuto(s).`,
+    });
   }
 
   const inputPassword = password.trim();
@@ -164,6 +200,7 @@ app.post("/api/auth/login", async (req, res) => {
   );
 
   if (user) {
+    intentosFallidos.delete(clave);
     if (!isBcryptHash((user.Contraseña || "").toString().trim())) {
       user.Contraseña = bcrypt.hashSync(inputPassword, 10);
       await saveDb(db, ["users"]);
@@ -181,6 +218,7 @@ app.post("/api/auth/login", async (req, res) => {
       token: crearToken(usuario, rol, sucursalAsignada),
     });
   } else {
+    anotarFallo(clave);
     return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
   }
 });
@@ -230,7 +268,7 @@ app.post("/api/admin/branch-configs", async (req, res) => {
   res.json({ success: true, config: db.branchConfigs[branch] });
 });
 
-app.post("/api/users/update-password", async (req, res) => {
+app.post("/api/users/update-password", requireRole("Admin"), async (req, res) => {
   const { Usuario, Contraseña } = req.body;
   if (!Usuario || !Contraseña) {
     return res.status(400).json({ error: "Usuario y contraseña requeridos" });
@@ -254,7 +292,7 @@ app.get("/api/products", (req, res) => {
   res.json(db.products);
 });
 
-app.post("/api/products", async (req, res) => {
+app.post("/api/products", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { Codigo, Producto, Medida, Proveedor, Celular, Costo_Proveedor, Utilidad, Factor_Bulto, Factor_Canastilla, Merma } = req.body;
   if (!Codigo || !Producto) {
     return res.status(400).json({ error: "Código y nombre de producto requeridos" });
@@ -300,7 +338,7 @@ app.post("/api/products", async (req, res) => {
   res.status(210).json(newProduct);
 });
 
-app.put("/api/products/:code", async (req, res) => {
+app.put("/api/products/:code", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { code } = req.params;
   const index = db.products.findIndex((p) => p.Codigo === code);
   if (index === -1) {
@@ -351,7 +389,7 @@ app.get("/api/providers", (req, res) => {
   res.json(db.providers);
 });
 
-app.post("/api/providers", async (req, res) => {
+app.post("/api/providers", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { Proveedor, Celular } = req.body;
   if (!Proveedor) {
     return res.status(400).json({ error: "Nombre de proveedor requerido" });
@@ -367,7 +405,7 @@ app.post("/api/providers", async (req, res) => {
   res.status(210).json(newProvider);
 });
 
-app.put("/api/providers/:name", async (req, res) => {
+app.put("/api/providers/:name", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const oldName = decodeURIComponent(req.params.name).trim();
   const { Proveedor: newName, Celular } = req.body;
 
@@ -585,7 +623,7 @@ app.post("/api/orders/bulk-update", async (req, res) => {
   res.json({ success: true });
 });
 
-app.post("/api/admin/matrix-save", async (req, res) => {
+app.post("/api/admin/matrix-save", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { fecha, edits, user } = req.body;
   if (!fecha || !edits) {
     return res.status(400).json({ error: "Fecha y cambios (edits) requeridos" });
@@ -951,7 +989,7 @@ app.put("/api/closures", async (req, res) => {
   }
 });
 
-app.put("/api/closures/reconcile", async (req, res) => {
+app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   try {
     const { ID_Cierre, Fecha, Sucursal, Recaudado_Fisico } = req.body;
     if (!Array.isArray(db.closures)) db.closures = [];
@@ -1029,11 +1067,14 @@ app.put("/api/closures/reconcile", async (req, res) => {
   }
 });
 
-app.post("/api/closures/bulk-reconcile", async (req, res) => {
+app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   try {
     const { Sucursal, Monto_Recogido } = req.body;
     if (!Sucursal) {
       return res.status(400).json({ error: "Sucursal es requerida para reconciliación en bloque" });
+    }
+    if (!puedeVerSucursal(req, Sucursal)) {
+      return res.status(403).json({ error: "No puedes recaudar el efectivo de esta sucursal." });
     }
     if (!Array.isArray(db.closures)) db.closures = [];
     if (!Array.isArray(db.walletTransactions)) db.walletTransactions = [];
@@ -1132,7 +1173,7 @@ app.post("/api/closures/bulk-reconcile", async (req, res) => {
   }
 });
 
-app.post("/api/payroll/schedules/bulk", async (req, res) => {
+app.post("/api/payroll/schedules/bulk", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { schedules, clearEmployee, clearMonth } = req.body;
   if (!schedules || !Array.isArray(schedules)) {
     return res.status(400).json({ error: "Arreglo de horarios es requerido" });
@@ -1268,6 +1309,13 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
   if (!Valor_Gasto || !Descripcion_Gasto) {
     return res.status(400).json({ error: "Valor y descripción del gasto requeridos" });
   }
+  if (!puedeVerSucursal(req, branch)) {
+    return res.status(403).json({ error: "No puedes registrar movimientos de este monedero." });
+  }
+  const valorGasto = Number(Valor_Gasto);
+  if (!Number.isFinite(valorGasto) || valorGasto <= 0) {
+    return res.status(400).json({ error: "El valor del gasto debe ser un número mayor a cero." });
+  }
 
   const txDate = Fecha || getColombiaDate();
 
@@ -1276,7 +1324,7 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
     Fecha: txDate,
     Sucursal: branch,
     Tipo_Movimiento: "Gasto",
-    Valor: parseFloat(Valor_Gasto),
+    Valor: valorGasto,
     Descripcion: Descripcion_Gasto,
     Responsable: Responsable || "System",
     Estado: "Pendiente",
@@ -1289,7 +1337,7 @@ app.post("/api/wallet/:branch/expense", async (req, res) => {
     ID_Gasto: genRecordId("GST", branch, txDate),
     Fecha: txDate,
     Sucursal: branch,
-    Valor_Gasto: parseFloat(Valor_Gasto),
+    Valor_Gasto: valorGasto,
     Descripcion_Gasto: Descripcion_Gasto,
     Responsable: Responsable || "System",
     Reconciliado_Fisico: false,
@@ -1309,6 +1357,16 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
   if (!Valor || !Descripcion || !Tipo_Movimiento) {
     return res.status(400).json({ error: "Valor, descripción y tipo de movimiento requeridos" });
   }
+  if (!puedeVerSucursal(req, branch)) {
+    return res.status(403).json({ error: "No puedes registrar movimientos de este monedero." });
+  }
+  if (Tipo_Movimiento !== "Ingreso" && Tipo_Movimiento !== "Gasto") {
+    return res.status(400).json({ error: "El tipo de movimiento debe ser Ingreso o Gasto." });
+  }
+  const valorMovimiento = Number(Valor);
+  if (!Number.isFinite(valorMovimiento) || valorMovimiento <= 0) {
+    return res.status(400).json({ error: "El valor debe ser un número mayor a cero." });
+  }
 
   const txDate = Fecha || getColombiaDate();
 
@@ -1317,7 +1375,7 @@ app.post("/api/wallet/:branch/transaction", async (req, res) => {
     Fecha: txDate,
     Sucursal: branch,
     Tipo_Movimiento: Tipo_Movimiento as "Ingreso" | "Gasto",
-    Valor: parseFloat(Valor),
+    Valor: valorMovimiento,
     Descripcion: Descripcion,
     Responsable: Responsable || "System",
     Estado: "Reconciliado",
@@ -1467,7 +1525,7 @@ app.get("/api/payroll/data", (req, res) => {
   res.json({ schedules, loans, rates, payroll });
 });
 
-app.post("/api/payroll/rates", async (req, res) => {
+app.post("/api/payroll/rates", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Empleado, Valor_Dia, Valor_Hora, Auxilio_Transporte, Celular, Cedula } = req.body;
   if (!Empleado) {
     return res.status(400).json({ error: "El nombre del empleado es requerido" });
@@ -1499,7 +1557,7 @@ app.post("/api/payroll/rates", async (req, res) => {
   res.status(200).json(newRate);
 });
 
-app.put("/api/payroll/rates/:name", async (req, res) => {
+app.put("/api/payroll/rates/:name", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const oldName = decodeURIComponent(req.params.name).trim();
   const { Empleado, Valor_Dia, Valor_Hora, Auxilio_Transporte, Celular, Cedula } = req.body;
   const index = db.rates.findIndex(r => r.Empleado.toLowerCase().trim() === oldName.toLowerCase());
@@ -1550,7 +1608,7 @@ app.delete("/api/payroll/rates/:name", requireRole("Admin"), async (req, res) =>
   res.json({ success: true });
 });
 
-app.post("/api/payroll/schedule", async (req, res) => {
+app.post("/api/payroll/schedule", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Fecha, Empleado, Sucursal, Horas_Trabajadas } = req.body;
   if (!Empleado || !Sucursal || Horas_Trabajadas === undefined) {
     return res.status(400).json({ error: "Empleado, Sucursal y Horas son requeridas" });
@@ -1568,7 +1626,7 @@ app.post("/api/payroll/schedule", async (req, res) => {
   res.status(210).json(newSched);
 });
 
-app.post("/api/payroll/schedule/save", async (req, res) => {
+app.post("/api/payroll/schedule/save", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Fecha, Empleado, Sucursal, Horas_Trabajadas } = req.body;
   if (!Empleado || !Sucursal || Horas_Trabajadas === undefined || !Fecha) {
     return res.status(400).json({ error: "Fecha, Empleado, Sucursal y Horas son requeridos" });
@@ -1591,7 +1649,7 @@ app.post("/api/payroll/schedule/save", async (req, res) => {
   res.json({ success: true, schedule: newSched });
 });
 
-app.post("/api/payroll/schedule/delete", async (req, res) => {
+app.post("/api/payroll/schedule/delete", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Fecha, Empleado } = req.body;
   if (!Fecha || !Empleado) {
     return res.status(400).json({ error: "Fecha y Empleado son requeridos" });
@@ -1606,7 +1664,7 @@ app.post("/api/payroll/schedule/delete", async (req, res) => {
   res.json({ success: true });
 });
 
-app.post("/api/payroll/loan", async (req, res) => {
+app.post("/api/payroll/loan", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Fecha, Empleado, Sucursal, Monto, Motivo } = req.body;
   if (!Empleado || !Monto) {
     return res.status(400).json({ error: "Empleado y Monto son requeridos" });
@@ -1626,7 +1684,7 @@ app.post("/api/payroll/loan", async (req, res) => {
   res.status(210).json(newLoan);
 });
 
-app.post("/api/payroll/generate", async (req, res) => {
+app.post("/api/payroll/generate", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { 
     Empleado, 
     Fecha_Inicio, 
@@ -1704,7 +1762,7 @@ app.post("/api/payroll/generate", async (req, res) => {
   res.status(210).json(newPayroll);
 });
 
-app.post("/api/payroll/pay", async (req, res) => {
+app.post("/api/payroll/pay", requireRole("Admin", "AdminSucursal"), async (req, res) => {
   const { Trabajador, Fecha } = req.body;
   const idx = db.payroll.findIndex((p) => p.Trabajador === Trabajador && p.Fecha === Fecha);
   if (idx !== -1) {
@@ -1729,7 +1787,7 @@ app.delete("/api/products/:code", requireRole("Admin"), async (req, res) => {
   res.json({ success: true, deleted });
 });
 
-app.post("/api/admin/import-csv-orders", async (req, res) => {
+app.post("/api/admin/import-csv-orders", requireRole("Admin", "Comprador"), async (req, res) => {
   const { csvText, fecha } = req.body;
   if (!csvText || typeof csvText !== "string" || !csvText.trim()) {
     return res.status(400).json({ error: "No se proporcionó el texto de los pedidos." });
@@ -2214,10 +2272,13 @@ app.get("/api/health", async (req, res) => {
         : undefined,
     });
   } catch (err: any) {
+    // El detalle puede nombrar el servidor y el usuario de la base de datos:
+    // solo se muestra a quien ya inició sesión.
+    console.error("[Health] Fallo al consultar la base:", err?.message || err);
     res.status(503).json({
       estado: "ERROR",
       baseDeDatos: "sin conexión",
-      detalle: err?.message || String(err),
+      detalle: req.auth ? (err?.message || String(err)) : undefined,
     });
   }
 });
