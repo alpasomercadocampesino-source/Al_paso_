@@ -5,7 +5,7 @@ import {
   ShieldCheck, LayoutGrid, ShoppingCart, Library, History, 
   PlusCircle, Edit2, Check, RefreshCw, Smartphone, TrendingUp, DollarSign,
   FileSpreadsheet, Wallet, Calendar, Boxes, Receipt, Printer, Trash2, ArrowUpRight, ArrowDownRight, ClipboardList, Plus, Download, Calculator, X, Settings, Store, Search, Edit,
-  ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, PhoneCall, AlertTriangle, CheckCircle2, Camera
+  ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, PhoneCall, AlertTriangle, CheckCircle2, Camera, Save
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { clasesSucursal, coloresSucursal } from "../utils/coloresSucursal";
@@ -19,7 +19,7 @@ import {
   getBranchPendingCount as getBranchPendingCountUtil,
   DEFAULT_BRANCHES,
 } from "../utils/financialCalculations";
-import { getColombiaDate, nombreDeMes } from "../utils/date";
+import { getColombiaDate, getColombiaYesterdayDate, nombreDeMes } from "../utils/date";
 import {
   ResponsiveContainer,
   LineChart,
@@ -229,6 +229,79 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [closuresFilterDate, setClosuresFilterDate] = useState<string>("");
   const [closuresFilterStartDate, setClosuresFilterStartDate] = useState<string>("");
   const [closuresFilterEndDate, setClosuresFilterEndDate] = useState<string>("");
+
+  // ── Cierre de un día pasado ─────────────────────────────────────────────
+  // Cuando una sucursal olvidó cerrar o se equivocó, el administrador registra
+  // el cierre por ella. Se calcula igual que en la tienda (ventas = efectivo
+  // contado + gastos) para que el histórico y el Excel cuadren.
+  const [cierreRetroAbierto, setCierreRetroAbierto] = useState(false);
+  const [cierreRetroFecha, setCierreRetroFecha] = useState<string>("");
+  const [cierreRetroSucursal, setCierreRetroSucursal] = useState<string>("");
+  const [cierreRetroEfectivo, setCierreRetroEfectivo] = useState<string>("");
+  const [cierreRetroRecoge, setCierreRetroRecoge] = useState<string>("Hamilton");
+  const [cierreRetroGastos, setCierreRetroGastos] = useState<{ valor: string; desc: string }[]>([{ valor: "", desc: "" }]);
+  const [cierreRetroGuardando, setCierreRetroGuardando] = useState(false);
+  const [cierreRetroAviso, setCierreRetroAviso] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  /** Solo dígitos: los campos de dinero aceptan "1.500.000" y "1500000" por igual. */
+  const soloDigitos = (v: string) => parseFloat(String(v).replace(/D/g, "")) || 0;
+
+  const gastosRetroValidos = cierreRetroGastos.filter((g) => soloDigitos(g.valor) > 0 && g.desc.trim());
+  const totalGastosRetro = gastosRetroValidos.reduce((a, g) => a + soloDigitos(g.valor), 0);
+  const efectivoRetro = soloDigitos(cierreRetroEfectivo);
+  const ventasRetro = efectivoRetro + totalGastosRetro;
+
+  const limpiarCierreRetro = () => {
+    setCierreRetroFecha("");
+    setCierreRetroSucursal("");
+    setCierreRetroEfectivo("");
+    setCierreRetroRecoge("Hamilton");
+    setCierreRetroGastos([{ valor: "", desc: "" }]);
+  };
+
+  const guardarCierreRetro = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCierreRetroAviso(null);
+
+    if (!cierreRetroFecha) return setCierreRetroAviso({ tipo: "error", texto: "Elija la fecha del cierre." });
+    if (!cierreRetroSucursal) return setCierreRetroAviso({ tipo: "error", texto: "Elija la sucursal." });
+    if (efectivoRetro <= 0) return setCierreRetroAviso({ tipo: "error", texto: "El efectivo contado debe ser mayor a cero." });
+    if (cierreRetroFecha > getColombiaDate()) return setCierreRetroAviso({ tipo: "error", texto: "No se puede registrar un cierre con fecha futura." });
+    if (!cierreRetroRecoge.trim()) return setCierreRetroAviso({ tipo: "error", texto: "Escriba quién recoge el efectivo." });
+
+    // Mismo formato de glosa que usa la sucursal, para que el Excel lo lea igual.
+    const glosa = gastosRetroValidos.map((g) => `${g.desc.trim()} (${cop(soloDigitos(g.valor))})`).join("; ");
+
+    setCierreRetroGuardando(true);
+    try {
+      const res = await fetch("/api/closures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          Sucursal: cierreRetroSucursal,
+          Fecha: cierreRetroFecha,
+          Ventas_Totales: ventasRetro,
+          Gastos_Extra: totalGastosRetro,
+          Descripcion_Gastos: glosa,
+          Persona_Recogio: cierreRetroRecoge.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "No se pudo registrar el cierre.");
+      }
+      setCierreRetroAviso({
+        tipo: "ok",
+        texto: `Cierre de ${cierreRetroSucursal} del ${cierreRetroFecha} registrado por ${cop(ventasRetro)}.`,
+      });
+      limpiarCierreRetro();
+      await fetchAdminSubData();
+    } catch (err: any) {
+      setCierreRetroAviso({ tipo: "error", texto: err.message });
+    } finally {
+      setCierreRetroGuardando(false);
+    }
+  };
   const [selectedBranchForWalletHistory, setSelectedBranchForWalletHistory] = useState<string>(sucursalAsignada || "Nobsa");
 
   // Smart Voice-Order simulated recording state
@@ -9144,6 +9217,170 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
             <div className="max-w-7xl mx-auto px-4 md:px-6 space-y-6">
               <h3 className="text-xl font-bold text-slate-850">Registro de Cierres de Caja y Emisión de Recibos</h3>
               <p className="text-slate-500 text-xs mt-1">Visualice los cierres de caja diarios reportados por cada una de las sucursales y emita recibos de dinero físicos en formato ticket.</p>
+
+              {/* CIERRE DE UN DÍA PASADO
+                  Para cuando una sucursal olvidó cerrar o se equivocó. Se calcula
+                  igual que en la tienda, así que el histórico y el Excel cuadran. */}
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const abriendo = !cierreRetroAbierto;
+                    setCierreRetroAbierto(abriendo);
+                    setCierreRetroAviso(null);
+                    // Se propone ayer, que es el caso normal: se olvidó cerrar anoche.
+                    if (abriendo && !cierreRetroFecha) setCierreRetroFecha(getColombiaYesterdayDate());
+                  }}
+                  className="w-full flex items-center justify-between gap-3 px-5 py-4 hover:bg-slate-50 transition cursor-pointer text-left"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <PlusCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span>
+                      <span className="block font-black text-slate-800 text-sm">Registrar cierre de un día pasado</span>
+                      <span className="block text-slate-400 text-[11px] mt-0.5">Cuando una sucursal olvidó cerrar o se equivocó.</span>
+                    </span>
+                  </span>
+                  {cierreRetroAbierto
+                    ? <ArrowUp className="w-4 h-4 text-slate-400 shrink-0" />
+                    : <ArrowDown className="w-4 h-4 text-slate-400 shrink-0" />}
+                </button>
+
+                {cierreRetroAbierto && (
+                  <form onSubmit={guardarCierreRetro} className="px-5 pb-5 pt-1 border-t border-slate-100 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Fecha del cierre</label>
+                        <input
+                          type="date"
+                          value={cierreRetroFecha}
+                          max={getColombiaDate()}
+                          onChange={(e) => setCierreRetroFecha(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Sucursal</label>
+                        <select
+                          value={cierreRetroSucursal}
+                          onChange={(e) => setCierreRetroSucursal(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-emerald-400"
+                        >
+                          <option value="">Elija una sucursal…</option>
+                          {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Efectivo contado</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={cierreRetroEfectivo}
+                          onChange={(e) => setCierreRetroEfectivo(e.target.value)}
+                          placeholder="1.250.000"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Persona que recoge</label>
+                        <input
+                          type="text"
+                          value={cierreRetroRecoge}
+                          onChange={(e) => setCierreRetroRecoge(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Gastos de caja menor de ese día</label>
+                      <div className="space-y-2">
+                        {cierreRetroGastos.map((g, i) => (
+                          <div key={i} className="flex gap-2">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={g.valor}
+                              onChange={(e) => setCierreRetroGastos((prev) => prev.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))}
+                              placeholder="Valor"
+                              className="w-32 shrink-0 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-emerald-400"
+                            />
+                            <input
+                              type="text"
+                              value={g.desc}
+                              onChange={(e) => setCierreRetroGastos((prev) => prev.map((x, j) => j === i ? { ...x, desc: e.target.value } : x))}
+                              placeholder="Concepto del gasto"
+                              className="flex-1 min-w-0 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:border-emerald-400"
+                            />
+                            {cierreRetroGastos.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setCierreRetroGastos((prev) => prev.filter((_, j) => j !== i))}
+                                className="px-3 text-rose-500 hover:bg-rose-50 rounded-xl text-xs font-bold cursor-pointer shrink-0"
+                                aria-label="Quitar este gasto"
+                              >
+                                Quitar
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCierreRetroGastos((prev) => [...prev, { valor: "", desc: "" }])}
+                        className="mt-2 text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                      >
+                        + Agregar otro gasto
+                      </button>
+                    </div>
+
+                    {/* El total se muestra antes de guardar: es la cifra que va al histórico. */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 justify-between items-center">
+                      <span className="text-[11px] text-slate-500">
+                        Efectivo <strong className="text-slate-800 font-mono">{cop(efectivoRetro)}</strong>
+                        {" + "}Gastos <strong className="text-slate-800 font-mono">{cop(totalGastosRetro)}</strong>
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Ventas totales del día:{" "}
+                        <strong className="text-emerald-700 font-mono text-sm">{cop(ventasRetro)}</strong>
+                      </span>
+                    </div>
+
+                    {/* Registrar dos veces el mismo día es válido (un cierre por turno),
+                        así que se avisa en vez de bloquear. */}
+                    {cierreRetroFecha && cierreRetroSucursal && closures.some((c) => c.Fecha === cierreRetroFecha && c.Sucursal === cierreRetroSucursal) && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+                        Ya hay un cierre de <strong>{cierreRetroSucursal}</strong> el {cierreRetroFecha}. Si era un turno distinto, siga; si no, revise antes de guardar.
+                      </p>
+                    )}
+
+                    {cierreRetroAviso && (
+                      <p className={`text-[11px] rounded-xl px-4 py-2.5 border ${cierreRetroAviso.tipo === "ok"
+                        ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                        : "text-rose-700 bg-rose-50 border-rose-200"}`}>
+                        {cierreRetroAviso.texto}
+                      </p>
+                    )}
+
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={limpiarCierreRetro}
+                        className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer"
+                      >
+                        Limpiar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={cierreRetroGuardando}
+                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {cierreRetroGuardando ? "Registrando…" : "Registrar cierre"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
 
               {/* FILTRATION & EXPORT BAR */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
