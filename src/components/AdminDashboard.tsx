@@ -8,6 +8,7 @@ import {
   ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, PhoneCall, AlertTriangle, CheckCircle2, Camera
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { clasesSucursal, coloresSucursal } from "../utils/coloresSucursal";
 import { Product, Provider, PriceHistory, DailyClosure, WalletTransaction, EmployeeSchedule, EmployeeLoan, EmployeeRate, PayrollRecord, PackagingMovement, SyncLog, Shrinkage } from "../types";
 import {
   calculateBranchUncollected,
@@ -745,36 +746,8 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
         const pillX = colX + (cellWidth - pillWidth) / 2;
         const pillY = currentY + (rowHeight - pillHeight) / 2;
 
-        // Colors
-        let pillBg = "#f1f5f9";
-        let pillText = "#475569";
-        let pillBorder = "#cbd5e1";
-
-        if (store === "Plaza") {
-          pillBg = "#ecfdf5";
-          pillText = "#047857";
-          pillBorder = "#a7f3d0";
-        } else if (store === "Nobsa") {
-          pillBg = "#eff6ff";
-          pillText = "#1d4ed8";
-          pillBorder = "#bfdbfe";
-        } else if (store === "Tibasosa") {
-          pillBg = "#fdf2f8";
-          pillText = "#be185d";
-          pillBorder = "#fbcfe8";
-        } else if (store === "Fira") {
-          pillBg = "#fff7ed";
-          pillText = "#c2410c";
-          pillBorder = "#ffedd5";
-        } else if (store === "Aquitania") {
-          pillBg = "#faf5ff";
-          pillText = "#6b21a8";
-          pillBorder = "#e9d5ff";
-        } else if (store === "Hansel") {
-          pillBg = "#fff1f2";
-          pillText = "#be123c";
-          pillBorder = "#fecdd3";
-        }
+        // El color sale del nombre, así cualquier sucursal tiene el suyo.
+        const { bg: pillBg, texto: pillText, borde: pillBorder } = coloresSucursal(store);
 
         // Draw pill background
         ctx.fillStyle = pillBg;
@@ -1694,13 +1667,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [showAddOrderModal, setShowAddOrderModal] = useState(false);
   const [selectedProductForNewOrder, setSelectedProductForNewOrder] = useState<Product | null>(null);
   const [newOrderSearchQuery, setNewOrderSearchQuery] = useState("");
-  const [newOrderBranchQty, setNewOrderBranchQty] = useState<{ [branch: string]: string }>({
-    Tibasosa: "",
-    Nobsa: "",
-    Fira: "",
-    Aquitania: "",
-    Hansel: ""
-  });
+  const [newOrderBranchQty, setNewOrderBranchQty] = useState<{ [branch: string]: string }>({});
   const [newOrderNotes, setNewOrderNotes] = useState("");
 
   const handleAddNewOrder = async () => {
@@ -1749,13 +1716,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       setShowAddOrderModal(false);
       setSelectedProductForNewOrder(null);
       setNewOrderSearchQuery("");
-      setNewOrderBranchQty({
-        Tibasosa: "",
-        Nobsa: "",
-        Fira: "",
-        Aquitania: "",
-        Hansel: ""
-      });
+      setNewOrderBranchQty({});
       setNewOrderNotes("");
       fetchMatrixOrders();
     } catch (err: any) {
@@ -3749,13 +3710,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                     onClick={() => {
                       setSelectedProductForNewOrder(null);
                       setNewOrderSearchQuery("");
-                      setNewOrderBranchQty({
-                        Tibasosa: "",
-                        Nobsa: "",
-                        Fira: "",
-                        Aquitania: "",
-                        Hansel: ""
-                      });
+                      setNewOrderBranchQty({});
                       setNewOrderNotes("");
                       setShowAddOrderModal(true);
                     }}
@@ -6344,12 +6299,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                           const pct = data.estimadoSolicitado > 0 ? (data.compradoReal / data.estimadoSolicitado) * 100 : 0;
                           
                           // Custom styles for badge depending on branch
-                          let badgeBg = "bg-slate-50 text-slate-600";
-                          if (b === "Tibasosa") badgeBg = "bg-rose-50 text-rose-700 border-rose-100";
-                          else if (b === "Nobsa") badgeBg = "bg-blue-50 text-blue-700 border-blue-100";
-                          else if (b === "Fira") badgeBg = "bg-amber-50 text-amber-700 border-amber-100";
-                          else if (b === "Aquitania") badgeBg = "bg-purple-50 text-purple-700 border-purple-100";
-                          else if (b === "Hansel") badgeBg = "bg-red-50 text-red-700 border-red-100";
+                          const badgeBg = clasesSucursal(b);
 
                           return (
                             <div key={b} className="flex items-center justify-between p-3 bg-slate-50/50 hover:bg-slate-50 border border-slate-100 rounded-2xl transition">
@@ -7630,19 +7580,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                             <span className="text-[9px] text-slate-400 italic block mt-1">Sin turnos</span>
                           ) : (
                             daySchedules.map((sched, sIdx) => {
-                              // Custom store color helper
-                              const getCol = (st: string) => {
-                                switch (st) {
-                                  case "Plaza": return "bg-emerald-50 text-emerald-700 border-emerald-100";
-                                  case "Nobsa": return "bg-sky-50 text-sky-700 border-sky-100";
-                                  case "Tibasosa": return "bg-indigo-50 text-indigo-700 border-indigo-100";
-                                  case "Fira": return "bg-amber-50 text-amber-700 border-amber-100";
-                                  case "Aquitania": return "bg-rose-50 text-rose-700 border-rose-100";
-                                  case "Hansel": return "bg-purple-50 text-purple-700 border-purple-100";
-                                  case "Descanso": return "bg-slate-100 text-slate-500 border-slate-200";
-                                  default: return "bg-slate-50 text-slate-600 border-slate-200";
-                                }
-                              };
+                              const getCol = clasesSucursal;
 
                               return (
                                 <div key={sIdx} className="p-1 bg-white border border-slate-100 rounded-lg shadow-sm text-[9px] flex items-center justify-between group/item">
@@ -10524,13 +10462,7 @@ Sobre Adobo;0;0;10;0;0;adobos;2100"
                   <td className="border border-slate-200 py-4 px-4 font-extrabold text-slate-800 text-sm bg-slate-50">{emp}</td>
                   {daysOfWeek.map((day) => {
                     const cell = roster[day] || { sucursal: "Descanso" };
-                    let bg = "bg-slate-100 text-slate-600 border-slate-200";
-                    if (cell.sucursal === "Plaza") bg = "bg-emerald-50 text-emerald-700 border-emerald-200";
-                    else if (cell.sucursal === "Nobsa") bg = "bg-blue-50 text-blue-700 border-blue-200";
-                    else if (cell.sucursal === "Tibasosa") bg = "bg-pink-50 text-pink-700 border-pink-200";
-                    else if (cell.sucursal === "Fira") bg = "bg-orange-50 text-orange-700 border-orange-200";
-                    else if (cell.sucursal === "Aquitania") bg = "bg-purple-50 text-purple-700 border-purple-200";
-                    else if (cell.sucursal === "Hansel") bg = "bg-red-50 text-red-700 border-red-200";
+                    const bg = clasesSucursal(cell.sucursal);
                     
                     return (
                       <td key={day} className="border border-slate-200 py-3 px-3 text-center">

@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
 
@@ -194,13 +194,9 @@ app.get("/api/users", requireRole("Admin"), (req, res) => {
 // Branch Configs for cash collection
 app.get("/api/admin/branch-configs", async (req, res) => {
   if (!db.branchConfigs) {
-    db.branchConfigs = {
-      Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-      Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
-      Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000 },
-      Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
-      Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-    };
+    // La configuración inicial vive en un solo lugar (server/db.ts); antes estaba
+    // duplicada aquí y las dos copias podían quedar distintas.
+    db.branchConfigs = defaultBranchConfigs();
     await saveDb(db, ["branchConfigs"]);
   }
   // Cada sesión solo recibe la configuración de las sucursales que puede ver.
@@ -706,7 +702,7 @@ app.post("/api/admin/matrix-save", async (req, res) => {
       prod = db.products[prodIdx];
 
       // Now update branch orders
-      const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+      const branches = Object.keys(db.branchConfigs || {});
       for (const sucursal of branches) {
         const fieldVal = editFields[sucursal]; // e.g. "2" or "" or undefined
         if (fieldVal === undefined) {
@@ -1722,7 +1718,8 @@ app.post("/api/admin/import-csv-orders", async (req, res) => {
   const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
 
   // Group orders under unique ID_Pedido per sucursal
-  const sucursales = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+  // Las sucursales salen de la configuración: una sucursal nueva entra sola.
+  const sucursales = Object.keys(db.branchConfigs || {});
   const oids: { [sucursal: string]: string } = {};
   for (const s of sucursales) {
     oids[s] = `PED-${s.toUpperCase()}-${timestamp}`;
@@ -1767,16 +1764,15 @@ app.post("/api/admin/import-csv-orders", async (req, res) => {
     const productName = parts[0].trim();
     if (!productName || productName === "") continue;
 
-    const branchQtys: { [sucursal: string]: string } = {
-      Tibasosa: parts[1] ? parts[1].trim() : "0",
-      Nobsa: parts[2] ? parts[2].trim() : "0",
-      Fira: parts[3] ? parts[3].trim() : "0",
-      Aquitania: parts[4] ? parts[4].trim() : "0",
-      Hansel: parts[5] ? parts[5].trim() : "0",
-    };
+    const branchQtys: { [sucursal: string]: string } = Object.fromEntries(
+      sucursales.map((suc, i) => [suc, parts[i + 1] ? parts[i + 1].trim() : "0"])
+    );
+    // Proveedor y precio van después de las columnas de sucursal, así que su
+    // posición depende de cuántas haya — antes estaban clavadas en 6 y 7.
+    const colProveedor = 1 + sucursales.length;
 
-    const supplierName = parts[6] ? parts[6].trim() : "Sin Proveedor";
-    const purchaseCost = parseFloat(parts[7] ? parts[7].trim().replace(/\s/g, "").replace(",", ".") : "0") || 0;
+    const supplierName = parts[colProveedor] ? parts[colProveedor].trim() : "Sin Proveedor";
+    const purchaseCost = parseFloat(parts[colProveedor + 1] ? parts[colProveedor + 1].trim().replace(/\s/g, "").replace(",", ".") : "0") || 0;
 
     // Find product in DB or create a placeholder product
     let prod = db.products.find(p => p.Producto.toLowerCase().trim() === productName.toLowerCase().trim());
@@ -1946,7 +1942,7 @@ app.post("/api/test/run", requireRole("Admin"), async (req, res) => {
     db.priceHistory = [];
     await truncateTables(["orders", "closures", "wallet_transactions", "price_histories"]);
 
-    const branches = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
+    const branches = Object.keys(db.branchConfigs || {});
     const productsToUse = db.products.slice(0, 15);
 
     if (productsToUse.length === 0) {

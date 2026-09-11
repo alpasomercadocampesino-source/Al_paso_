@@ -188,21 +188,10 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   const [newOrderBranchQty, setNewOrderBranchQty] = useState<{ [branch: string]: string }>(() => {
     try {
       const cached = localStorage.getItem("alpaso_draft_branch_qty");
-      return cached ? JSON.parse(cached) : {
-        Tibasosa: "",
-        Nobsa: "",
-        Fira: "",
-        Aquitania: "",
-        Hansel: ""
-      };
+      // Sin sucursales fijas: cada clave se crea al escribir su cantidad.
+      return cached ? JSON.parse(cached) : {};
     } catch {
-      return {
-        Tibasosa: "",
-        Nobsa: "",
-        Fira: "",
-        Aquitania: "",
-        Hansel: ""
-      };
+      return {};
     }
   });
   const [newOrderNotes, setNewOrderNotes] = useState(() => {
@@ -287,13 +276,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       setShowAddOrderModal(false);
       setSelectedProductForNewOrder(null);
       setNewOrderSearchQuery("");
-      setNewOrderBranchQty({
-        Tibasosa: "",
-        Nobsa: "",
-        Fira: "",
-        Aquitania: "",
-        Hansel: ""
-      });
+      setNewOrderBranchQty({});
       setNewOrderNotes("");
       fetchOrders();
     } catch (err: any) {
@@ -401,19 +384,12 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           ctx.fillText(pName, 30, currY + 23);
 
           // Branches
-          const qTib = parseQty(row.Tibasosa);
-          const qNob = parseQty(row.Nobsa);
-          const qFir = parseQty(row.Fira);
-          const qAqu = parseQty(row.Aquitania);
-          const qHan = parseQty(row.Hansel);
-
-          const branchValues = [
-            { q: qTib, val: row.Tibasosa, x: 300 },
-            { q: qNob, val: row.Nobsa, x: 380 },
-            { q: qFir, val: row.Fira, x: 460 },
-            { q: qAqu, val: row.Aquitania, x: 540 },
-            { q: qHan, val: row.Hansel, x: 620 }
-          ];
+          // Una columna por sucursal activa, repartidas desde x=300 cada 80px.
+          const branchValues = sucursales.map((b, i) => ({
+            q: parseQty(row[b]),
+            val: row[b],
+            x: 300 + i * 80,
+          }));
 
           ctx.textAlign = "center";
           branchValues.forEach(b => {
@@ -1367,25 +1343,14 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           Fecha: date,
           Codigo: code,
           Producto: o.Producto,
-          Tibasosa: "-",
-          Nobsa: "-",
-          Fira: "-",
-          Aquitania: "-",
-          Hansel: "-",
-          Tibasosa_Obs: "",
-          Nobsa_Obs: "",
-          Fira_Obs: "",
-          Aquitania_Obs: "",
-          Hansel_Obs: "",
+          // Una clave por sucursal activa. Antes eran cinco nombres fijos, así que
+          // una sucursal nueva no tenía dónde guardar su cantidad y no salía.
+          ...Object.fromEntries(sucursales.flatMap((b) => [[b, "-"], [`${b}_Obs`, ""]])),
           Proveedor: proveedorName,
           Precio_Compra: costoMomento,
           Requerido: 0,
           Observacion: "",
-          Tibasosa_Pag: 0,
-          Nobsa_Pag: 0,
-          Fira_Pag: 0,
-          Aquitania_Pag: 0,
-          Hansel_Pag: 0,
+          ...Object.fromEntries(sucursales.map((b) => [`${b}_Pag`, 0])),
           Total: 0,
           Precio_Anterior: prevCosto,
           Cambio: 0,
@@ -1400,40 +1365,21 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         };
       }
 
-      const branch = (o.Sucursal || "").trim().toLowerCase();
+      // Se resuelve el nombre real de la sucursal contra la lista activa, sin
+      // depender de nombres escritos en el código.
+      const branch = sucursales.find(
+        (b) => b.toLowerCase() === (o.Sucursal || "").trim().toLowerCase()
+      );
+      if (!branch) return; // pedido de una sucursal que ya no está activa
       const edit = matrixEdits[code] || {};
 
-      let currentQty = o.Cantidad;
-      if (branch === "tibasosa" && edit.Tibasosa_Qty !== undefined) {
-        currentQty = parseQty(edit.Tibasosa_Qty);
-      } else if (branch === "nobsa" && edit.Nobsa_Qty !== undefined) {
-        currentQty = parseQty(edit.Nobsa_Qty);
-      } else if (branch === "fira" && edit.Fira_Qty !== undefined) {
-        currentQty = parseQty(edit.Fira_Qty);
-      } else if (branch === "aquitania" && edit.Aquitania_Qty !== undefined) {
-        currentQty = parseQty(edit.Aquitania_Qty);
-      } else if (branch === "hansel" && edit.Hansel_Qty !== undefined) {
-        currentQty = parseQty(edit.Hansel_Qty);
-      }
+      const qtyEditada = edit[`${branch}_Qty`];
+      const currentQty = qtyEditada !== undefined ? parseQty(qtyEditada) : o.Cantidad;
+      groupedRowsMap[code][branch] = currentQty;
 
-      if (branch === "tibasosa") groupedRowsMap[code].Tibasosa = currentQty;
-      else if (branch === "nobsa") groupedRowsMap[code].Nobsa = currentQty;
-      else if (branch === "fira") groupedRowsMap[code].Fira = currentQty;
-      else if (branch === "aquitania") groupedRowsMap[code].Aquitania = currentQty;
-      else if (branch === "hansel") groupedRowsMap[code].Hansel = currentQty;
-
-      let currentObs = o.Notas || "";
-      if (branch === "tibasosa" && edit.Tibasosa_Obs !== undefined) currentObs = edit.Tibasosa_Obs;
-      else if (branch === "nobsa" && edit.Nobsa_Obs !== undefined) currentObs = edit.Nobsa_Obs;
-      else if (branch === "fira" && edit.Fira_Obs !== undefined) currentObs = edit.Fira_Obs;
-      else if (branch === "aquitania" && edit.Aquitania_Obs !== undefined) currentObs = edit.Aquitania_Obs;
-      else if (branch === "hansel" && edit.Hansel_Obs !== undefined) currentObs = edit.Hansel_Obs;
-
-      if (branch === "tibasosa") groupedRowsMap[code].Tibasosa_Obs = currentObs;
-      else if (branch === "nobsa") groupedRowsMap[code].Nobsa_Obs = currentObs;
-      else if (branch === "fira") groupedRowsMap[code].Fira_Obs = currentObs;
-      else if (branch === "aquitania") groupedRowsMap[code].Aquitania_Obs = currentObs;
-      else if (branch === "hansel") groupedRowsMap[code].Hansel_Obs = currentObs;
+      const obsEditada = edit[`${branch}_Obs`];
+      const currentObs = obsEditada !== undefined ? obsEditada : (o.Notas || "");
+      groupedRowsMap[code][`${branch}_Obs`] = currentObs;
 
       if (currentObs && currentObs.trim() !== "") {
         if (groupedRowsMap[code].Observacion) {
@@ -1444,19 +1390,12 @@ export default function CompradorDashboard({ username, isAdminView = false, last
     });
 
     const list = Object.values(groupedRowsMap).map((row) => {
-      const qtyTibasosa = parseQty(row.Tibasosa);
-      const qtyNobsa = parseQty(row.Nobsa);
-      const qtyFira = parseQty(row.Fira);
-      const qtyAquitania = parseQty(row.Aquitania);
-      const qtyHansel = parseQty(row.Hansel);
-
-      const requerido = qtyTibasosa + qtyNobsa + qtyFira + qtyAquitania + qtyHansel;
-
-      const tibasosaPag = qtyTibasosa * row.Precio_Compra;
-      const nobsaPag = qtyNobsa * row.Precio_Compra;
-      const firaPag = qtyFira * row.Precio_Compra;
-      const aquitaniaPag = qtyAquitania * row.Precio_Compra;
-      const hanselPag = qtyHansel * row.Precio_Compra;
+      // El total pedido suma todas las sucursales activas, no cinco fijas: así
+      // una sucursal nueva entra en el requerido y en lo que se le paga al proveedor.
+      const requerido = sucursales.reduce((suma, b) => suma + parseQty(row[b]), 0);
+      const pagosPorSucursal = Object.fromEntries(
+        sucursales.map((b) => [`${b}_Pag`, parseQty(row[b]) * row.Precio_Compra])
+      );
 
       const total = requerido * row.Precio_Compra;
       const cambio = row.Precio_Compra - row.Precio_Anterior;
@@ -1464,11 +1403,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       return {
         ...row,
         Requerido: requerido,
-        Tibasosa_Pag: tibasosaPag,
-        Nobsa_Pag: nobsaPag,
-        Fira_Pag: firaPag,
-        Aquitania_Pag: aquitaniaPag,
-        Hansel_Pag: hanselPag,
+        ...pagosPorSucursal,
         Total: total,
         Cambio: cambio
       };
@@ -1529,11 +1464,9 @@ export default function CompradorDashboard({ username, isAdminView = false, last
 
     providerRows.forEach(row => {
       const branchDetails: string[] = [];
-      if (parseQty(row.Tibasosa) > 0) branchDetails.push(`Tibasosa: ${row.Tibasosa}`);
-      if (parseQty(row.Nobsa) > 0) branchDetails.push(`Nobsa: ${row.Nobsa}`);
-      if (parseQty(row.Fira) > 0) branchDetails.push(`Fira: ${row.Fira}`);
-      if (parseQty(row.Aquitania) > 0) branchDetails.push(`Aquitania: ${row.Aquitania}`);
-      if (parseQty(row.Hansel) > 0) branchDetails.push(`Hansel: ${row.Hansel}`);
+      for (const b of sucursales) {
+        if (parseQty(row[b]) > 0) branchDetails.push(`${b}: ${row[b]}`);
+      }
 
       const detailsStr = branchDetails.length > 0 ? ` [${branchDetails.join(", ")}]` : "";
       text += `• *${formatQty(row.Requerido)} ${row.Medida}* - ${row.Producto}${detailsStr}\n`;
@@ -1780,13 +1713,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                     onClick={() => {
                       setSelectedProductForNewOrder(null);
                       setNewOrderSearchQuery("");
-                      setNewOrderBranchQty({
-                        Tibasosa: "",
-                        Nobsa: "",
-                        Fira: "",
-                        Aquitania: "",
-                        Hansel: ""
-                      });
+                      setNewOrderBranchQty({});
                       setNewOrderNotes("");
                       setShowAddOrderModal(true);
                     }}
@@ -2083,20 +2010,14 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-slate-700">
                                   {rows.map((row, idx) => {
-                                    const qTib = parseQty(row.Tibasosa);
-                                    const qNob = parseQty(row.Nobsa);
-                                    const qFir = parseQty(row.Fira);
-                                    const qAqu = parseQty(row.Aquitania);
-                                    const qHan = parseQty(row.Hansel);
-
                                     return (
                                       <tr key={`${row.Codigo}-${idx}`} className="hover:bg-slate-50 transition font-medium">
                                         <td className="py-2.5 px-3 font-bold text-slate-900">{row.Producto}</td>
-                                        <td className="py-2.5 px-3 text-center font-bold bg-blue-50/20 text-blue-950">{qTib > 0 ? row.Tibasosa : "-"}</td>
-                                        <td className="py-2.5 px-3 text-center font-bold bg-indigo-50/20 text-indigo-950">{qNob > 0 ? row.Nobsa : "-"}</td>
-                                        <td className="py-2.5 px-3 text-center font-bold bg-purple-50/20 text-purple-950">{qFir > 0 ? row.Fira : "-"}</td>
-                                        <td className="py-2.5 px-3 text-center font-bold bg-amber-50/20 text-amber-950">{qAqu > 0 ? row.Aquitania : "-"}</td>
-                                        <td className="py-2.5 px-3 text-center font-bold bg-emerald-50/20 text-emerald-950">{qHan > 0 ? row.Hansel : "-"}</td>
+                                        {sucursales.map((b) => (
+                                          <td key={b} className="py-2.5 px-3 text-center font-bold bg-indigo-50/20 text-indigo-950">
+                                            {parseQty(row[b]) > 0 ? row[b] : "-"}
+                                          </td>
+                                        ))}
                                         <td className="py-2.5 px-3 text-center font-black text-slate-900 bg-slate-100 rounded-md">
                                           {formatQty(row.Requerido)} {row.Medida}
                                         </td>
@@ -2427,60 +2348,22 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                               </div>
                             </td>
                             
-                            {/* TIBASOSA (Editable inline) */}
-                            <td className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
-                              <input
-                                type="text"
-                                value={matrixEdits[row.Codigo]?.Tibasosa_Qty !== undefined ? matrixEdits[row.Codigo].Tibasosa_Qty : (row.Tibasosa === "-" ? "" : (typeof row.Tibasosa === "number" ? formatQty(row.Tibasosa) : row.Tibasosa))}
-                                onChange={(e) => handleMatrixEdit(row.Codigo, "Tibasosa_Qty", e.target.value)}
-                                placeholder="-"
-                                className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
-                              />
-                            </td>
-                            
-                            {/* NOBSA (Editable inline) */}
-                            <td className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
-                              <input
-                                type="text"
-                                value={matrixEdits[row.Codigo]?.Nobsa_Qty !== undefined ? matrixEdits[row.Codigo].Nobsa_Qty : (row.Nobsa === "-" ? "" : (typeof row.Nobsa === "number" ? formatQty(row.Nobsa) : row.Nobsa))}
-                                onChange={(e) => handleMatrixEdit(row.Codigo, "Nobsa_Qty", e.target.value)}
-                                placeholder="-"
-                                className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
-                              />
-                            </td>
-                            
-                            {/* FIRA (Editable inline) */}
-                            <td className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
-                              <input
-                                type="text"
-                                value={matrixEdits[row.Codigo]?.Fira_Qty !== undefined ? matrixEdits[row.Codigo].Fira_Qty : (row.Fira === "-" ? "" : (typeof row.Fira === "number" ? formatQty(row.Fira) : row.Fira))}
-                                onChange={(e) => handleMatrixEdit(row.Codigo, "Fira_Qty", e.target.value)}
-                                placeholder="-"
-                                className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
-                              />
-                            </td>
-                            
-                            {/* AQUITANIA (Editable inline) */}
-                            <td className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
-                              <input
-                                type="text"
-                                value={matrixEdits[row.Codigo]?.Aquitania_Qty !== undefined ? matrixEdits[row.Codigo].Aquitania_Qty : (row.Aquitania === "-" ? "" : (typeof row.Aquitania === "number" ? formatQty(row.Aquitania) : row.Aquitania))}
-                                onChange={(e) => handleMatrixEdit(row.Codigo, "Aquitania_Qty", e.target.value)}
-                                placeholder="-"
-                                className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
-                              />
-                            </td>
-                            
-                            {/* HANSEL (Editable inline) */}
-                            <td className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
-                              <input
-                                type="text"
-                                value={matrixEdits[row.Codigo]?.Hansel_Qty !== undefined ? matrixEdits[row.Codigo].Hansel_Qty : (row.Hansel === "-" ? "" : (typeof row.Hansel === "number" ? formatQty(row.Hansel) : row.Hansel))}
-                                onChange={(e) => handleMatrixEdit(row.Codigo, "Hansel_Qty", e.target.value)}
-                                placeholder="-"
-                                className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
-                              />
-                            </td>
+                            {/* Una casilla editable por sucursal activa */}
+                            {sucursales.map((b) => {
+                              const editada = matrixEdits[row.Codigo]?.[`${b}_Qty`];
+                              const valor = row[b];
+                              return (
+                                <td key={b} className="py-1 px-1.5 text-center border-r border-slate-100 w-20 bg-indigo-50/5">
+                                  <input
+                                    type="text"
+                                    value={editada !== undefined ? editada : (valor === "-" || valor === undefined ? "" : (typeof valor === "number" ? formatQty(valor) : valor))}
+                                    onChange={(e) => handleMatrixEdit(row.Codigo, `${b}_Qty`, e.target.value)}
+                                    placeholder="-"
+                                    className="w-16 px-1 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-extrabold text-slate-850 focus:bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-400 text-xs transition"
+                                  />
+                                </td>
+                              );
+                            })}
                             
                             {/* PROVEEDOR */}
                             <td className="py-2.5 px-3 border-r border-slate-100">
@@ -2571,20 +2454,12 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                               </div>
                             </td>
                             
-                            {/* TIBASOSA_PAG */}
-                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">{cop(row.Tibasosa_Pag)}</td>
-                            
-                            {/* NOBSA_PAG */}
-                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">{cop(row.Nobsa_Pag)}</td>
-                            
-                            {/* FIRA_PAG */}
-                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">{cop(row.Fira_Pag)}</td>
-                            
-                            {/* AQUITANIA_PAG */}
-                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">{cop(row.Aquitania_Pag)}</td>
-                            
-                            {/* HANSEL_PAG */}
-                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">{cop(row.Hansel_Pag)}</td>
+                            {/* Lo que se le paga por cada sucursal activa */}
+                            {sucursales.map((b) => (
+                              <td key={b} className="py-2.5 px-3 text-right font-mono text-slate-600 border-r border-slate-100">
+                                {cop(row[`${b}_Pag`])}
+                              </td>
+                            ))}
                             
                             {/* TOTAL */}
                             <td className="py-2.5 px-3 text-right font-mono font-extrabold text-slate-950 border-r border-slate-100 text-sm bg-slate-50/30">

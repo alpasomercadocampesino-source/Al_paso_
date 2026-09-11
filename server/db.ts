@@ -950,7 +950,7 @@ function readJsonBackup(): DatabaseSchema | null {
   return null;
 }
 
-function defaultBranchConfigs(): { [branch: string]: BranchConfig } {
+export function defaultBranchConfigs(): { [branch: string]: BranchConfig } {
   return {
     Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
     Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
