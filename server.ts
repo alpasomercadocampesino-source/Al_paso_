@@ -986,6 +986,19 @@ app.put("/api/closures/reconcile", async (req, res) => {
       db.walletTransactions[txIdx].Estado = isConfirmed ? "Reconciliado" : "Pendiente";
     }
 
+    // Al desmarcar hay que sacar del libro central la entrada que dejó la
+    // recolección. El saldo se lee del libro, así que si la entrada se queda,
+    // la plata sigue contada aunque el cierre vuelva a estar pendiente.
+    if (!isConfirmed) {
+      const sobrante = db.walletTransactions.filter(
+        (t) => t && String(t.Sucursal || "") === "Central / Nequi" && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre)
+      );
+      for (const t of sobrante) {
+        db.walletTransactions.splice(db.walletTransactions.indexOf(t), 1);
+        await deleteRowByClientId("wallet_transactions", (t as any)._id);
+      }
+    }
+
     // Record entry in Central / Nequi when confirmed
     if (isConfirmed && netVal > 0) {
       const today = getColombiaDate();
@@ -1178,35 +1191,38 @@ app.get("/api/wallet/:branch", (req, res) => {
 
   let balance = 0;
   if (isCentral) {
-    // Se suman solo las sucursales visibles: una sucursal con administrador propio
-    // queda fuera también de los totales del administrador general.
-    const reconciledClosuresSum = filtrarPorSucursal(req, db.closures || [], (c) => c && c.Sucursal)
-      .filter((c) => c && c.Recaudado_Fisico)
-      .reduce((acc, c) => acc + ((c.Ventas_Totales || 0) - (c.Gastos_Extra || 0)), 0);
+    // El saldo sale del libro de "Central / Nequi": entra lo que entró y sale lo
+    // que salió. Antes el ingreso se rearmaba a partir de los cierres marcados
+    // como recogidos más los movimientos que no dijeran "Recolección Física", y
+    // una recogida parcial no entraba por ninguna de las dos vías.
     const paidPayrollSum = filtrarPorSucursal(req, db.payroll || [], (p) => p && p.Sucursal)
       .reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
 
+    const privadas = sucursalesConAdminPropio();
     const centralTxs = (db.walletTransactions || []).filter((t) => {
       const s = (t?.Sucursal || "").toLowerCase().trim();
-      return s.includes("central") || s.includes("nequi");
+      if (!s.includes("central") && !s.includes("nequi")) return false;
+      // Una sucursal con administrador propio queda fuera de los totales del
+      // administrador general, también cuando su plata pasa por la caja central.
+      if (req.auth?.r === "Admin" && privadas.size > 0) {
+        const d = (t?.Descripcion || "").toLowerCase();
+        for (const p of privadas) if (d.includes(p.toLowerCase())) return false;
+      }
+      return true;
     });
 
-    const manualCentralIngresos = centralTxs
-      .filter(
-        (t) =>
-          t.Tipo_Movimiento === "Ingreso" &&
-          !t.Descripcion?.includes("Recolección Física") &&
-          !t.Descripcion?.includes("Recaudo Cierre")
-      )
+    const centralIngresos = centralTxs
+      .filter((t) => t.Tipo_Movimiento === "Ingreso")
       .reduce((acc, t) => acc + (t.Valor || 0), 0);
 
     const centralGastos = centralTxs
       .filter((t) => t.Tipo_Movimiento === "Gasto")
       .reduce((acc, t) => acc + (t.Valor || 0), 0);
 
-    balance = (reconciledClosuresSum + manualCentralIngresos) - (paidPayrollSum + centralGastos);
+    balance = centralIngresos - (paidPayrollSum + centralGastos);
   } else {
     const targetBranch = branch.toLowerCase().trim();
+    // De cada cierre sin recoger queda el neto menos lo ya recogido a cuenta.
     const uncollectedClosuresSum = (db.closures || [])
       .filter(
         (c) =>
@@ -1214,7 +1230,12 @@ app.get("/api/wallet/:branch", (req, res) => {
           !c.Recaudado_Fisico &&
           (c.Sucursal || "").toLowerCase().trim() === targetBranch
       )
-      .reduce((acc, c) => acc + ((c.Ventas_Totales || 0) - (c.Gastos_Extra || 0)), 0);
+      .reduce(
+        (acc, c) =>
+          acc +
+          Math.max(0, (c.Ventas_Totales || 0) - (c.Gastos_Extra || 0) - (c.Monto_Recaudado || 0)),
+        0
+      );
 
     const pendingExpensesSum = (db.walletTransactions || [])
       .filter(
