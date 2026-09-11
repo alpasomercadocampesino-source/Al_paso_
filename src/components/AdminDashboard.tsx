@@ -318,7 +318,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       setCierreRetroGuardando(false);
     }
   };
-  const [selectedBranchForWalletHistory, setSelectedBranchForWalletHistory] = useState<string>(sucursalAsignada || "Nobsa");
 
   // Smart Voice-Order simulated recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -9911,149 +9910,10 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 </div>
               </div>
 
-              {/* BRANCH MONEDERO HISTORY FOR ADMIN */}
-              <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
-                  <div>
-                    <h4 className="text-lg font-bold text-slate-800">💰 Historial de Monederos por Sucursal</h4>
-                    <p className="text-slate-400 text-xs">Monitoree los saldos acumulados de ventas no recogidas y los gastos directos pagados en cada tienda.</p>
-                  </div>
-                  <div>
-                    <select
-                      value={selectedBranchForWalletHistory}
-                      onChange={(e) => setSelectedBranchForWalletHistory(e.target.value)}
-                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-400"
-                    >
-                      {branches.map(b => (
-                        <option key={b} value={b}>{b}</option>
-                      ))}
-                      {/* El monedero central consolida todas las sucursales, así que
-                          no se ofrece a un administrador de una sola. */}
-                      {!esAdminDeUnaSucursal && <option value="Central / Nequi">Central / Nequi</option>}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Calculate Branch Balance */}
-                {(() => {
-                  const sucursalTxs = walletTxs.filter(
-                    t => t.Sucursal.toLowerCase().trim() === selectedBranchForWalletHistory.toLowerCase().trim()
-                  );
-
-                  // Calculate chronologically sorted running balance
-                  const sortedTxs = [...sucursalTxs].sort((a, b) => a.Fecha.localeCompare(b.Fecha));
-                  let cumulative = 0;
-                  const txsWithRunning = sortedTxs.map(t => {
-                    cumulative += t.Tipo_Movimiento === "Ingreso" ? t.Valor : -t.Valor;
-                    return { ...t, runningBalance: cumulative };
-                  });
-                  // Display newest first
-                  const displayTxs = [...txsWithRunning].reverse();
-
-                  const isCentral = selectedBranchForWalletHistory.toLowerCase().includes("central") || selectedBranchForWalletHistory.toLowerCase().includes("nequi");
-
-                  const sucursalBalance = sucursalTxs.reduce((sum, t) => {
-                    if (isCentral) {
-                      return t.Tipo_Movimiento === "Ingreso" ? sum + t.Valor : sum - t.Valor;
-                    } else {
-                      if (t.Estado === "Pendiente" || !t.Estado) {
-                        return t.Tipo_Movimiento === "Ingreso" ? sum + t.Valor : sum - t.Valor;
-                      }
-                      return sum;
-                    }
-                  }, 0);
-
-                  return (
-                    <div className="space-y-4">
-                      <div className="bg-slate-50 p-4 rounded-2xl flex items-center justify-between border border-slate-150">
-                        <div>
-                          <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Saldo Monedero {selectedBranchForWalletHistory}</span>
-                          <h5 className={`text-2xl font-black mt-1 ${sucursalBalance >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                            {cop(sucursalBalance)}
-                          </h5>
-                        </div>
-                        <div className="text-right text-xs text-slate-400 font-medium">
-                          Total Movimientos: {sucursalTxs.length}
-                        </div>
-                      </div>
-
-                      <div className="overflow-x-auto max-h-[300px]">
-                        {displayTxs.length === 0 ? (
-                          <p className="text-slate-400 text-xs italic text-center py-10">No se registran transacciones para esta sucursal.</p>
-                        ) : (
-                          <table className="w-full text-left text-xs border-collapse">
-                            <thead>
-                              <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
-                                <th className="py-2.5 px-2">Fecha</th>
-                                <th className="py-2.5 px-2">Tipo</th>
-                                <th className="py-2.5 px-2 text-right">Monto</th>
-                                <th className="py-2.5 px-2 text-right">Saldo</th>
-                                <th className="py-2.5 px-2">Descripción</th>
-                                <th className="py-2.5 px-2">Responsable</th>
-                                <th className="py-2.5 px-2">Estado</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {displayTxs.map((t: any, idx) => (
-                                <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50 transition">
-                                  <td className="py-2 px-2 text-slate-500 font-semibold">{t.Fecha}</td>
-                                  <td className="py-2 px-2">
-                                    <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] ${
-                                      t.Tipo_Movimiento === "Ingreso" 
-                                        ? "bg-emerald-50 text-emerald-700 border border-emerald-150" 
-                                        : "bg-rose-50 text-rose-700 border border-rose-150"
-                                    }`}>
-                                      {t.Tipo_Movimiento === "Ingreso" ? "Ingreso" : "Gasto"}
-                                    </span>
-                                  </td>
-                                  <td className={`py-2 px-2 text-right font-mono font-bold ${
-                                    t.Tipo_Movimiento === "Ingreso" ? "text-emerald-600" : "text-rose-600"
-                                  }`}>
-                                    {t.Tipo_Movimiento === "Ingreso" ? "+" : "-"}{cop(t.Valor)}
-                                  </td>
-                                  <td className="py-2 px-2 text-right font-mono font-bold text-slate-700">
-                                    {cop(t.runningBalance)}
-                                  </td>
-                                  <td className="py-2 px-2 text-slate-600 font-medium max-w-xs truncate" title={t.Descripcion}>
-                                    <div className="flex items-center gap-1.5">
-                                      <span>{t.Descripcion}</span>
-                                      {t.Foto_Factura && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setViewingPhotoUrl(t.Foto_Factura)}
-                                          title="Ver Factura / Soporte"
-                                          className="p-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-150 rounded-lg inline-flex items-center justify-center cursor-pointer transition shadow-xs"
-                                        >
-                                          <Camera className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="py-2 px-2 text-slate-500">{t.Responsable}</td>
-                                  <td className="py-2 px-2">
-                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                      t.Estado === "Reconciliado" 
-                                        ? "bg-emerald-50 text-emerald-700 border border-emerald-150" 
-                                        : "bg-amber-50 text-amber-700 border border-amber-150"
-                                    }`}>
-                                      {t.Estado === "Reconciliado" ? "Confirmado / Reconciliado" : "Pendiente de Recojo"}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
             </div>
           );
         })()}
 
-        {/* HISTORIAL DE MONEDEROS SEC */}
       </div>
 
       {/* VIEW PHOTO/INVOICE MODAL */}
