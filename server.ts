@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
 
@@ -2404,6 +2404,32 @@ app.post("/api/admin/backups", requireRole("Admin"), async (req, res) => {
     res.json({ success: true, id, resumen, message: "Respaldo creado correctamente." });
   } catch (err: any) {
     res.status(500).json({ error: "No se pudo crear el respaldo: " + (err?.message || String(err)) });
+  }
+});
+
+/**
+ * Repuebla tablas desde un respaldo, rellenando solo lo que falte (nunca pisa lo
+ * que ya existe). Después recarga la copia en memoria del servidor desde
+ * Postgres, para que no quede desincronizada de lo que se acaba de restaurar.
+ *
+ * Se limita a las tablas indicadas; si no se indican, a las operativas, que son
+ * las que borra "limpiar datos operativos".
+ */
+app.post("/api/admin/backups/:id/restore", requireRole("Admin"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const permitidas = ["orders", "closures", "wallet_transactions", "products", "shrinkages", "nequi_expenses"];
+    const pedidas: string[] = Array.isArray(req.body?.tablas) && req.body.tablas.length > 0
+      ? req.body.tablas.filter((t: string) => permitidas.includes(t))
+      : ["orders", "closures", "wallet_transactions", "products"];
+
+    const reinsertadas = await restoreBackup(id, pedidas);
+    db = await reloadFromPostgres();
+
+    res.json({ success: true, respaldo: id, reinsertadas });
+  } catch (err: any) {
+    console.error("Error al restaurar respaldo:", err);
+    res.status(500).json({ error: "No se pudo restaurar el respaldo: " + (err?.message || String(err)) });
   }
 });
 

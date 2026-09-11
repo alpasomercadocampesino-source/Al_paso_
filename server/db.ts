@@ -85,6 +85,58 @@ export async function getBackup(id: number): Promise<any | null> {
   return rows[0] || null;
 }
 
+/**
+ * Repuebla tablas desde un respaldo, SIN pisar lo que ya existe.
+ *
+ * Usa ON CONFLICT (client_id) DO NOTHING: cada fila del respaldo cuyo client_id
+ * ya está en la tabla se ignora, y solo se reinsertan las que faltan. Así una
+ * restauración es un relleno de huecos — recupera lo borrado por accidente y no
+ * revierte ningún cambio legítimo posterior. Se omiten id y las marcas de tiempo
+ * para que Postgres reasigne el serial y no choque con la secuencia.
+ *
+ * Devuelve cuántas filas se reinsertaron por tabla.
+ */
+export async function restoreBackup(
+  id: number,
+  tablas: readonly string[]
+): Promise<Record<string, number>> {
+  const backup = await getBackup(id);
+  if (!backup) throw new Error(`No existe el respaldo #${id}`);
+  const contenido = backup.contenido || {};
+  const OMITIR = new Set(["id", "created_at", "updated_at"]);
+  const reinsertadas: Record<string, number> = {};
+
+  for (const tabla of tablas) {
+    const filas: any[] = Array.isArray(contenido[tabla]) ? contenido[tabla] : [];
+    if (filas.length === 0) { reinsertadas[tabla] = 0; continue; }
+
+    const columnas = Object.keys(filas[0]).filter((c) => !OMITIR.has(c));
+    const colIdents = sql.join(columnas.map((c) => sql.identifier(c)), sql.raw(", "));
+
+    let total = 0;
+    const LOTE = 400;
+    for (let i = 0; i < filas.length; i += LOTE) {
+      const lote = filas.slice(i, i + LOTE);
+      const tuplas = sql.join(
+        lote.map((fila) => sql`(${sql.join(columnas.map((c) => sql`${fila[c] ?? null}`), sql.raw(", "))})`),
+        sql.raw(", ")
+      );
+      const res: any = await pgDb.execute(
+        sql`INSERT INTO ${sql.identifier(tabla)} (${colIdents}) VALUES ${tuplas} ON CONFLICT (client_id) DO NOTHING`
+      );
+      total += Number(res?.rowCount ?? 0);
+    }
+    reinsertadas[tabla] = total;
+  }
+
+  return reinsertadas;
+}
+
+/** Recarga la copia en memoria desde Postgres, sin resembrar. */
+export async function reloadFromPostgres(): Promise<DatabaseSchema> {
+  return loadFromPostgres();
+}
+
 async function hoursSinceLastBackup(): Promise<number> {
   const result = await pgDb.execute(sql`SELECT EXTRACT(EPOCH FROM (now() - MAX(creado_en))) / 3600 AS horas FROM backups`);
   const rows: any[] = (result as any).rows ?? (result as any);
