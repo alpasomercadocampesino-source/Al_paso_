@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, sucursalesOrdenadas, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, sucursalesOrdenadas, ordenDeSucursal, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
 
@@ -279,7 +279,7 @@ app.get("/api/admin/branch-configs", async (req, res) => {
 });
 
 app.post("/api/admin/branch-configs", async (req, res) => {
-  const { branch, baseCaja, recolectorPredeterminado, montoAlerta } = req.body;
+  const { branch, baseCaja, recolectorPredeterminado, montoAlerta, orden } = req.body;
   if (!branch) {
     return res.status(400).json({ error: "Sucursal requerida" });
   }
@@ -291,10 +291,19 @@ app.post("/api/admin/branch-configs", async (req, res) => {
     db.branchConfigs = {};
   }
 
+  // La posición decide dónde sale la sucursal en todas las tablas. Si no llega
+  // una nueva, se conserva la que ya tenía: guardar el monto de alerta no debe
+  // reordenar las columnas de media empresa sin querer.
+  const anterior = db.branchConfigs[branch];
+  const posicion = orden === undefined || orden === null || orden === ""
+    ? ordenDeSucursal(branch, anterior?.orden)
+    : Math.min(998, Math.max(1, Math.round(Number(orden)) || 999));
+
   db.branchConfigs[branch] = {
     baseCaja: Number(baseCaja) || 0,
     recolectorPredeterminado: String(recolectorPredeterminado || "Cualquiera"),
     montoAlerta: Number(montoAlerta) || 0,
+    orden: posicion,
   };
 
   await saveDb(db, ["branchConfigs"]);

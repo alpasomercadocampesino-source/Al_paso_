@@ -38,27 +38,29 @@ import {
 
 interface BranchConfigRowProps {
   branch: string;
-  initialConfig?: { baseCaja: number; recolectorPredeterminado: string; montoAlerta: number };
-  onSave: (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number) => Promise<void>;
+  initialConfig?: { baseCaja: number; recolectorPredeterminado: string; montoAlerta: number; orden?: number };
+  onSave: (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden: number) => Promise<void>;
 }
 
 function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps) {
-  const defaultConf = { baseCaja: 0, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 };
+  const defaultConf = { baseCaja: 0, recolectorPredeterminado: "Hamilton", montoAlerta: 500000, orden: 999 };
   const conf = initialConfig || defaultConf;
 
   const [montoAlerta, setMontoAlerta] = useState(conf.montoAlerta);
+  const [orden, setOrden] = useState(conf.orden ?? 999);
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     if (initialConfig) {
       setMontoAlerta(initialConfig.montoAlerta);
+      setOrden(initialConfig.orden ?? 999);
     }
   }, [initialConfig]);
 
   const handleSave = async () => {
     setIsSaving(true);
-    await onSave(branch, 0, "Hamilton", montoAlerta);
+    await onSave(branch, 0, "Hamilton", montoAlerta, orden);
     setIsSaving(false);
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2000);
@@ -67,6 +69,20 @@ function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps
   return (
     <tr className="hover:bg-slate-50/50 transition">
       <td className="py-3.5 px-3 font-bold text-slate-800 text-sm">{branch}</td>
+      {/* La posición manda en TODAS las tablas: columnas de la matriz, planilla
+          de compras, selectores de cierre y monedero. Menor número, más a la
+          izquierda. */}
+      <td className="py-3.5 px-3">
+        <input
+          type="number"
+          min={1}
+          max={998}
+          value={orden}
+          onChange={(e) => setOrden(Number(e.target.value))}
+          className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 focus:bg-white focus:border-slate-400 focus:outline-none rounded-xl text-xs font-bold text-slate-700 text-center"
+          placeholder="1"
+        />
+      </td>
       <td className="py-3.5 px-3 font-semibold text-slate-500 text-xs">Hamilton</td>
       <td className="py-3.5 px-3">
         <div className="relative rounded-xl shadow-sm max-w-[160px]">
@@ -132,28 +148,32 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     ["Sobre Adobo", ...sucursalesDelServidor.map((_, i) => (i === 0 ? "10" : "0")), "adobos", "2100"].join(";"),
   ].join("\n");
 
-  useEffect(() => {
+  /**
+   * Vuelve a pedir la lista de sucursales al servidor, que la entrega ya
+   * ordenada. Se llama al abrir el panel y cada vez que se cambia la posición
+   * de una sucursal, para que el nuevo orden se vea sin recargar la página.
+   */
+  const recargarSucursales = async () => {
     if (sucursalAsignada) return; // su alcance es una sola, no hace falta consultar
-    let vivo = true;
-    (async () => {
-      try {
-        const [res, resPedidos] = await Promise.all([
-          fetch("/api/admin/branch-configs"),
-          fetch("/api/admin/branch-configs?ambito=pedidos"),
-        ]);
-        if (!res.ok) return; // se conserva la lista por defecto
-        const cfg = await res.json();
-        const nombres = Object.keys(cfg || {});
-        if (vivo && nombres.length > 0) setSucursalesDelServidor(nombres);
-        if (resPedidos.ok) {
-          const dePedidos = Object.keys((await resPedidos.json()) || {});
-          if (vivo && dePedidos.length > 0) setSucursalesDePedidosServidor(dePedidos);
-        }
-      } catch {
-        /* sin red: se sigue con la lista por defecto */
+    try {
+      const [res, resPedidos] = await Promise.all([
+        fetch("/api/admin/branch-configs"),
+        fetch("/api/admin/branch-configs?ambito=pedidos"),
+      ]);
+      if (!res.ok) return; // se conserva la lista por defecto
+      const nombres = Object.keys((await res.json()) || {});
+      if (nombres.length > 0) setSucursalesDelServidor(nombres);
+      if (resPedidos.ok) {
+        const dePedidos = Object.keys((await resPedidos.json()) || {});
+        if (dePedidos.length > 0) setSucursalesDePedidosServidor(dePedidos);
       }
-    })();
-    return () => { vivo = false; };
+    } catch {
+      /* sin red: se sigue con la lista por defecto */
+    }
+  };
+
+  useEffect(() => {
+    recargarSucursales();
   }, [sucursalAsignada]);
   const [adminMode, setAdminMode] = useState<
     "master" | "sucursal" | "catalog" | "factors" | "history" | "reconciliation" | "payroll_smart" | "packaging_ledger" | "closures_receipts" | "products_manager" | "provider_accounts" | "purchase_reports" | "users" | "sync_logs" | "mermas" | "precios_nuevos" | "wallet_history"
@@ -445,15 +465,18 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     }
   };
 
-  const handleSaveBranchConfig = async (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number) => {
+  const handleSaveBranchConfig = async (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden?: number) => {
     try {
       const res = await fetch("/api/admin/branch-configs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch, baseCaja, recolectorPredeterminado, montoAlerta }),
+        body: JSON.stringify({ branch, baseCaja, recolectorPredeterminado, montoAlerta, orden }),
       });
       if (res.ok) {
         fetchBranchConfigs();
+        // La posición reordena las columnas de todas las tablas, así que se
+        // vuelve a pedir la lista para verlo sin recargar la página.
+        await recargarSucursales();
       }
     } catch (e) {
       console.error("Error saving branch config:", e);
@@ -7231,6 +7254,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <thead>
                     <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                       <th className="py-3 px-3">Sucursal</th>
+                      <th className="py-3 px-3" title="Posición en todas las tablas y selectores. Menor número, primero.">Orden</th>
                       <th className="py-3 px-3">Recolector Autorizado</th>
                       <th className="py-3 px-3">Límite Alerta Efectivo (COP)</th>
                       <th className="py-3 px-3 text-right">Acción</th>
