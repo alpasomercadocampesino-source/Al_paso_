@@ -280,6 +280,8 @@ export const branchConfigs = pgTable("branch_configs", {
   baseCaja: doublePrecision("base_caja").default(0),
   recolectorPredeterminado: text("recolector_predeterminado").default(""),
   montoAlerta: doublePrecision("monto_alerta").default(0),
+  // Posición en que la sucursal aparece en todas las tablas y selectores.
+  orden: integer("orden").default(999),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();

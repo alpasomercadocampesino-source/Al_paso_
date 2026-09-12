@@ -3,7 +3,7 @@ import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, sucursalesOrdenadas, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
 import { sendOrderSummaryEmail } from "./server/mailer.ts";
 import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
 
@@ -270,8 +270,10 @@ app.get("/api/admin/branch-configs", async (req, res) => {
   // con administrador propio, para armar las columnas de la planilla de compras.
   const ambito: Ambito = req.query.ambito === "pedidos" ? "pedidos" : undefined;
   const visibles: { [branch: string]: any } = {};
-  for (const [nombre, cfg] of Object.entries(db.branchConfigs)) {
-    if (puedeVerSucursal(req, nombre, ambito)) visibles[nombre] = cfg;
+  // Se recorre en el orden del negocio, no en el de creación: las claves del
+  // objeto conservan ese orden y con eso se ordenan todas las tablas del cliente.
+  for (const nombre of sucursalesOrdenadas(db.branchConfigs)) {
+    if (puedeVerSucursal(req, nombre, ambito)) visibles[nombre] = db.branchConfigs[nombre];
   }
   res.json(visibles);
 });
@@ -817,7 +819,7 @@ app.post("/api/admin/matrix-save", requireRole("Admin", "AdminSucursal", "Compra
       prod = db.products[prodIdx];
 
       // Now update branch orders
-      const branches = Object.keys(db.branchConfigs || {});
+      const branches = sucursalesOrdenadas(db.branchConfigs);
       for (const sucursal of branches) {
         const fieldVal = editFields[sucursal]; // e.g. "2" or "" or undefined
         if (fieldVal === undefined) {
@@ -2000,7 +2002,7 @@ app.post("/api/admin/import-csv-orders", requireRole("Admin", "Comprador"), asyn
 
   // Group orders under unique ID_Pedido per sucursal
   // Las sucursales salen de la configuración: una sucursal nueva entra sola.
-  const sucursales = Object.keys(db.branchConfigs || {});
+  const sucursales = sucursalesOrdenadas(db.branchConfigs);
   const oids: { [sucursal: string]: string } = {};
   for (const s of sucursales) {
     oids[s] = `PED-${s.toUpperCase()}-${timestamp}`;
@@ -2254,7 +2256,7 @@ app.post("/api/test/run", requireRole("Admin"), async (req, res) => {
     await truncateTables(["orders", "closures", "wallet_transactions", "price_histories"]);
     console.log(`[Test] Datos operativos reemplazados por prueba; respaldo previo #${respaldoId}.`);
 
-    const branches = Object.keys(db.branchConfigs || {});
+    const branches = sucursalesOrdenadas(db.branchConfigs);
     const productsToUse = db.products.slice(0, 15);
 
     if (productsToUse.length === 0) {

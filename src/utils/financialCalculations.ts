@@ -1,6 +1,7 @@
 import { DailyClosure, WalletTransaction, PayrollRecord } from "../types";
 
-export const DEFAULT_BRANCHES = ["Nobsa", "Tibasosa", "Fira", "Aquitania", "Hansel"];
+// Respaldo si falla la consulta al servidor. Mismo orden que usa el negocio.
+export const DEFAULT_BRANCHES = ["Tibasosa", "Nobsa", "Fira", "Aquitania", "Hansel"];
 
 /**
  * Efectivo que todavía está físicamente en una sucursal.

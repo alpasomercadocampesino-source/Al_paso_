@@ -399,6 +399,8 @@ export interface BranchConfig {
   baseCaja: number;
   recolectorPredeterminado: string;
   montoAlerta: number;
+  /** Posición en tablas y selectores. Menor primero; empate se rompe por nombre. */
+  orden: number;
 }
 
 export interface DatabaseSchema {
@@ -1035,13 +1037,48 @@ function readJsonBackup(): DatabaseSchema | null {
   return null;
 }
 
+/**
+ * Orden en que se muestran las sucursales en todas las tablas y selectores.
+ *
+ * Es el orden con que el negocio las nombra, no el alfabético ni el de creación.
+ * Vive aquí — junto a la configuración inicial — porque el orden es un dato de
+ * la sucursal, no una lista repartida por las pantallas: cada tabla recorre la
+ * lista que devuelve el servidor y hereda este orden sin saber de él.
+ *
+ * Solo se usa como respaldo para sucursales que aún no tienen `orden` guardado.
+ * Una sucursal nueva que no figure aquí queda al final, ordenada por nombre.
+ */
+const ORDEN_POR_DEFECTO: Record<string, number> = {
+  tibasosa: 1,
+  nobsa: 2,
+  fira: 3,
+  aquitania: 4,
+  "18sogamoso": 5,
+  hansel: 6,
+};
+
+/** Orden guardado de una sucursal, o el de respaldo si todavía no tiene. */
+export function ordenDeSucursal(nombre: string, guardado?: number | null): number {
+  if (typeof guardado === "number" && guardado > 0 && guardado < 999) return guardado;
+  return ORDEN_POR_DEFECTO[String(nombre || "").toLowerCase().trim()] ?? 999;
+}
+
+/** Nombres de sucursal ordenados como los muestra el negocio. */
+export function sucursalesOrdenadas(configs: { [branch: string]: BranchConfig } | undefined): string[] {
+  return Object.keys(configs || {}).sort((a, b) => {
+    const oa = ordenDeSucursal(a, configs?.[a]?.orden);
+    const ob = ordenDeSucursal(b, configs?.[b]?.orden);
+    return oa !== ob ? oa - ob : a.localeCompare(b, "es", { sensitivity: "base" });
+  });
+}
+
 export function defaultBranchConfigs(): { [branch: string]: BranchConfig } {
   return {
-    Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
-    Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000 },
-    Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000 },
-    Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000 },
-    Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 },
+    Tibasosa: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000, orden: 1 },
+    Nobsa: { baseCaja: 100000, recolectorPredeterminado: "Cris", montoAlerta: 400000, orden: 2 },
+    Fira: { baseCaja: 120000, recolectorPredeterminado: "Hamilton", montoAlerta: 450000, orden: 3 },
+    Aquitania: { baseCaja: 200000, recolectorPredeterminado: "Cris", montoAlerta: 600000, orden: 4 },
+    Hansel: { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000, orden: 6 },
   };
 }
 
@@ -1082,6 +1119,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       baseCaja: r.baseCaja ?? 0,
       recolectorPredeterminado: r.recolectorPredeterminado ?? "",
       montoAlerta: r.montoAlerta ?? 0,
+      orden: ordenDeSucursal(r.sucursal, r.orden),
     };
   }
 
@@ -1155,6 +1193,7 @@ async function asegurarColumnas(): Promise<void> {
     ["orders", "recibido_sucursal", "BOOLEAN DEFAULT FALSE"],
     ["orders", "recibido_por", "TEXT DEFAULT ''"],
     ["orders", "recibido_fecha", "TEXT DEFAULT ''"],
+    ["branch_configs", "orden", "INTEGER DEFAULT 999"],
   ];
   for (const [tabla, columna, tipo] of columnas) {
     try {
@@ -1309,7 +1348,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
   branchConfigs: async (db, tx) => {
     const configs = Object.entries(db.branchConfigs || {});
     await upsertRows(tx, "branch_configs", "client_id", configs.map(([sucursal, cfg]) => ({
-      client_id: `brc_${sucursal.toLowerCase().trim()}`, sucursal, base_caja: cfg.baseCaja, recolector_predeterminado: cfg.recolectorPredeterminado, monto_alerta: cfg.montoAlerta,
+      client_id: `brc_${sucursal.toLowerCase().trim()}`, sucursal, base_caja: cfg.baseCaja, recolector_predeterminado: cfg.recolectorPredeterminado, monto_alerta: cfg.montoAlerta, orden: ordenDeSucursal(sucursal, cfg.orden),
     })));
   },
 };
