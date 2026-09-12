@@ -487,29 +487,51 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
     }
   };
 
+  /**
+   * Trae el pedido del último día en que la sucursal pidió algo.
+   *
+   * Se agrupa por FECHA, no por identificador de pedido. Un mismo día suele
+   * tener varios identificadores: el pedido que arma la sucursal y los renglones
+   * que se agregan después (desde la matriz del administrador, o un producto que
+   * se acordó por teléfono). Antes se tomaba solo el identificador más reciente,
+   * así que si ese día alguien agregó un producto suelto, el "pedido anterior"
+   * mostraba ese único producto y escondía los otros sesenta y nueve.
+   *
+   * Se excluye el día de hoy: lo anterior es lo de antes, no lo que se está
+   * armando ahora.
+   */
   const fetchPreviousOrder = async () => {
     try {
       const res = await fetch(`/api/orders?sucursal=${branchName}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.length > 0) {
-          const uniqueOrderIds = Array.from(new Set(data.map((o: any) => o.ID_Pedido)));
-          if (uniqueOrderIds.length > 0) {
-            uniqueOrderIds.sort();
-            const latestOrderId = uniqueOrderIds[uniqueOrderIds.length - 1];
-            const latestOrderItems = data.filter((o: any) => o.ID_Pedido === latestOrderId);
-            const prevItemsMap: { [code: string]: string } = {};
-            latestOrderItems.forEach((item: any) => {
-              prevItemsMap[item.Codigo] = item.Cantidad;
-            });
-            setPreviousOrderItems(prevItemsMap);
-          } else {
-            setPreviousOrderItems({});
-          }
-        } else {
-          setPreviousOrderItems({});
-        }
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        setPreviousOrderItems({});
+        return;
       }
+
+      const hoy = getColombiaDate();
+      const anteriores = data.filter((o: any) => o?.Fecha && o.Fecha < hoy);
+      if (anteriores.length === 0) {
+        setPreviousOrderItems({});
+        return;
+      }
+
+      const ultimaFecha = anteriores.reduce(
+        (mayor: string, o: any) => (o.Fecha > mayor ? o.Fecha : mayor),
+        ""
+      );
+
+      // Todos los renglones de ese día. Si un producto aparece dos veces, se
+      // queda el del identificador más reciente: una carga posterior corrige a
+      // la anterior en vez de sumarse.
+      const delDia = anteriores
+        .filter((o: any) => o.Fecha === ultimaFecha)
+        .sort((a: any, b: any) => String(a.ID_Pedido || "").localeCompare(String(b.ID_Pedido || "")));
+
+      const prevItemsMap: { [code: string]: string } = {};
+      for (const item of delDia) prevItemsMap[item.Codigo] = item.Cantidad;
+      setPreviousOrderItems(prevItemsMap);
     } catch (e) {
       console.error("Error fetching previous orders:", e);
     }
