@@ -554,6 +554,39 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [selectedBranchForReconcile, setSelectedBranchForReconcile] = useState<string | null>(null);
   const [reconcileModalLoading, setReconcileModalLoading] = useState<boolean>(false);
 
+  /**
+   * Elimina un cierre y los movimientos de monedero que generó.
+   *
+   * La confirmación muestra el monto a propósito: borrar un cierre con plata
+   * quita esas ventas del histórico, y quien lo hace debe ver cuánto antes de
+   * decidir. El servidor respalda solo antes de borrar.
+   */
+  const borrarCierre = (c: DailyClosure) => {
+    const neto = (c.Ventas_Totales || 0) - (c.Gastos_Extra || 0);
+    const aviso = neto > 0
+      ? `Se eliminará el cierre de ${c.Sucursal} del ${c.Fecha} por ${cop(neto)} y los movimientos de monedero que generó. Esta plata dejará de contar en el histórico.`
+      : `Se eliminará el cierre vacío de ${c.Sucursal} del ${c.Fecha} y su movimiento de monedero en $0.`;
+
+    setCustomConfirm({
+      isOpen: true,
+      title: neto > 0 ? "Eliminar un cierre con dinero" : "Eliminar cierre vacío",
+      message: `${aviso}\n\nSe guarda un respaldo automático antes de borrar. ¿Continuar?`,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/closures/${encodeURIComponent(c.ID_Cierre)}`, { method: "DELETE" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "No se pudo eliminar el cierre.");
+          setSuccessMsg(
+            `Cierre de ${c.Sucursal} del ${c.Fecha} eliminado, junto con ${data.movimientosBorrados || 0} movimiento(s) de monedero. Respaldo previo #${data.respaldoPrevio}.`
+          );
+          await fetchAdminSubData();
+        } catch (err: any) {
+          setErrorMsg(err.message);
+        }
+      },
+    });
+  };
+
   const handleToggleSingleClosureReconcile = async (fecha: string, sucursal: string, currentStatus: boolean) => {
     setReconcileModalLoading(true);
     try {
@@ -9922,6 +9955,17 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                   >
                                     <Edit className="w-3 h-3" />
                                     Modificar
+                                  </button>
+
+                                  {/* Un cierre mal registrado no se podía quitar:
+                                      quedaba en el histórico para siempre. */}
+                                  <button
+                                    onClick={() => borrarCierre(c)}
+                                    title="Eliminar este cierre y los movimientos de monedero que generó"
+                                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold rounded-lg flex items-center gap-1 cursor-pointer transition shadow-xs"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    Eliminar
                                   </button>
                                 </div>
                               </td>

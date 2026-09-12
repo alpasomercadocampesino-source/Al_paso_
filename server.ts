@@ -1184,6 +1184,65 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
   }
 });
 
+/**
+ * Borra un cierre de caja y los movimientos de monedero que generó.
+ *
+ * Existe porque un cierre mal registrado no se podía corregir de ninguna forma:
+ * quedaba en el histórico para siempre. De ahí salieron los cierres en $0 que
+ * confundían la lista.
+ *
+ * Van juntos el cierre, su entrada de monedero ("Cierre de Caja - Efectivo neto
+ * registrado") y, si ya se había recaudado, la entrada a la caja central y el
+ * retiro de la sucursal. Borrar solo uno dejaría el libro descuadrado.
+ *
+ * Respalda antes de tocar nada: si el respaldo falla, no se borra.
+ */
+app.delete("/api/closures/:id", requireRole("Admin"), async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.id).trim();
+    const idx = (db.closures || []).findIndex((c) => c && c.ID_Cierre === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Cierre no encontrado" });
+    }
+
+    const cierre = db.closures[idx];
+    if (!puedeVerSucursal(req, cierre.Sucursal)) {
+      return res.status(403).json({ error: "No puedes borrar cierres de esta sucursal." });
+    }
+
+    const respaldoId = await respaldarAntesDeBorrar(`borrar el cierre ${id}`);
+
+    // Todo movimiento que lleve el identificador del cierre en su descripción.
+    const ligados = (db.walletTransactions || []).filter(
+      (t) => t && String(t.Descripcion || "").includes(id)
+    );
+    for (const t of ligados) {
+      db.walletTransactions.splice(db.walletTransactions.indexOf(t), 1);
+      await deleteRowByClientId("wallet_transactions", (t as any)._id);
+    }
+
+    db.closures.splice(idx, 1);
+    await deleteRowByClientId("closures", (cierre as any)._id);
+    await saveDb(db, ["closures", "walletTransactions"]);
+
+    res.json({
+      success: true,
+      respaldoPrevio: respaldoId,
+      borrado: {
+        id: cierre.ID_Cierre,
+        sucursal: cierre.Sucursal,
+        fecha: cierre.Fecha,
+        ventas: cierre.Ventas_Totales,
+        gastos: cierre.Gastos_Extra,
+      },
+      movimientosBorrados: ligados.length,
+    });
+  } catch (err: any) {
+    console.error("Error al borrar cierre:", err);
+    res.status(500).json({ error: "No se pudo borrar el cierre: " + (err?.message || String(err)) });
+  }
+});
+
 app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   try {
     const { Sucursal, Monto_Recogido } = req.body;
