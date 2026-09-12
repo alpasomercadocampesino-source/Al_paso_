@@ -730,11 +730,20 @@ export default function SucursalDashboard({ branchName, lastGlobalSync }: Sucurs
       return;
     }
 
+    const efectivoContado = parseFloat(String(cashOnHand).replace(/\D/g, "")) || 0;
+    // El cierre solo exigía el nombre de quien recoge, así que se podía guardar
+    // con el dinero en blanco. Así nacieron los cierres en $0 que ensucian el
+    // histórico: alguien guardaba antes de contar y volvía a guardar el bueno.
+    if (efectivoContado <= 0) {
+      setErrorMsg("Escriba el efectivo contado antes de guardar el cierre. Si todavía no lo cuenta, deje el cierre abierto: el borrador se guarda solo.");
+      return;
+    }
+
     setLoading(true);
     setErrorMsg("");
     setSuccessMsg("");
 
-    const cashNum = parseFloat(String(cashOnHand).replace(/\D/g, "")) || 0;
+    const cashNum = efectivoContado;
 
     // Calculate total expenses
     const validExpenses = expenses.filter((exp) => (parseFloat(String(exp.value).replace(/\D/g, "")) || 0) > 0 && exp.desc.trim());

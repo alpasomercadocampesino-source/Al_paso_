@@ -974,6 +974,15 @@ app.post("/api/closures", async (req, res) => {
     const fotoCierre = revisarFoto(Foto_Factura);
     if (fotoCierre) return res.status(400).json({ error: fotoCierre });
 
+    // Un cierre sin plata no dice nada y ensucia el histórico: los cierres en $0
+    // del 1 de septiembre salieron de guardar el formulario en blanco. Se rechaza
+    // aquí además de en pantalla, para que tampoco entre por la cola sin conexión.
+    if ((parseFloat(Ventas_Totales) || 0) <= 0) {
+      return res.status(400).json({
+        error: "El cierre no puede quedar en cero. Escriba el efectivo contado antes de guardarlo.",
+      });
+    }
+
     const closureDate = Fecha || getColombiaDate();
     const collector = Persona_Recogio && String(Persona_Recogio).trim() ? String(Persona_Recogio).trim() : "Hamilton";
     const branchTrim = String(Sucursal).trim();
