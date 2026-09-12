@@ -144,8 +144,19 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   // Closures state
   const [closures, setClosures] = useState<DailyClosure[]>([]);
   const [pendingClosures, setPendingClosures] = useState<DailyClosure[]>([]);
+
+  // Qué cierres se listan en el detalle. Arranca en "pendientes", que es el
+  // trabajo del día; los ya recaudados siguen consultables en vez de
+  // desaparecer de la pantalla apenas se recogen.
+  const [filtroCierres, setFiltroCierres] = useState<"pendientes" | "recaudados" | "todos">("pendientes");
   // Orden del listado de cierres: por defecto del más reciente al más antiguo.
   const [ordenCierres, setOrdenCierres] = useState<"reciente" | "antiguo">("reciente");
+
+  /** Cierres que se listan en el detalle, según el filtro elegido. */
+  const cierresMostrados =
+    filtroCierres === "pendientes" ? closures.filter((c) => !c.Recaudado_Fisico)
+    : filtroCierres === "recaudados" ? closures.filter((c) => c.Recaudado_Fisico)
+    : closures;
   const [walletTxs, setWalletTxs] = useState<WalletTransaction[]>([]);
   const [searchLedger, setSearchLedger] = useState("");
 
@@ -2742,9 +2753,34 @@ export default function CompradorDashboard({ username, isAdminView = false, last
               <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
                 <div>
                   <h3 className="text-lg font-bold text-slate-800">📋 Detalle de Cierres Individuales</h3>
-                  <p className="text-slate-400 text-xs mt-1">Historial detallado de reportes diarios de caja pendientes de conciliación física.</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Historial de los reportes diarios de caja. Al recaudar uno deja de estar pendiente, pero se puede seguir consultando aquí.
+                  </p>
+                  {/* Antes esta lista solo mostraba los pendientes: al recaudar un
+                      cierre desaparecía de la pantalla y no había forma de volver
+                      a verlo, ni de comprobar qué se había recogido y cuándo. */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-3">
+                    {([
+                      { valor: "pendientes", texto: "Pendientes", n: closures.filter((c) => !c.Recaudado_Fisico).length },
+                      { valor: "recaudados", texto: "Ya recaudados", n: closures.filter((c) => c.Recaudado_Fisico).length },
+                      { valor: "todos", texto: "Todos", n: closures.length },
+                    ] as const).map((op) => (
+                      <button
+                        key={op.valor}
+                        type="button"
+                        onClick={() => setFiltroCierres(op.valor)}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition cursor-pointer active:scale-95 ${
+                          filtroCierres === op.valor
+                            ? "bg-slate-900 text-white shadow-sm"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        {op.texto} ({op.n})
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                {pendingClosures.length > 1 && (
+                {cierresMostrados.length > 1 && (
                   <button
                     onClick={() => setOrdenCierres((o) => (o === "reciente" ? "antiguo" : "reciente"))}
                     title="Cambiar el orden de la lista por fecha"
@@ -2757,15 +2793,21 @@ export default function CompradorDashboard({ username, isAdminView = false, last
               </div>
               <div className="mb-6" />
 
-              {pendingClosures.length === 0 ? (
+              {cierresMostrados.length === 0 ? (
                 <div className="text-center py-16 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col justify-center items-center">
                   <CheckCircle2 className="w-10 h-10 text-emerald-500 mb-2" />
-                  <p className="text-slate-800 font-bold">¡Todo Reconciliado!</p>
-                  <p className="text-slate-400 text-xs mt-1">No hay cierres de caja pendientes de recolección de efectivo.</p>
+                  <p className="text-slate-800 font-bold">
+                    {filtroCierres === "pendientes" ? "¡Todo Reconciliado!" : "Sin cierres para mostrar"}
+                  </p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    {filtroCierres === "pendientes"
+                      ? "No hay cierres de caja pendientes de recolección de efectivo."
+                      : "No hay cierres que coincidan con el filtro elegido."}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {[...pendingClosures].sort((a, b) => {
+                  {[...cierresMostrados].sort((a, b) => {
                     // Fecha en formato YYYY-MM-DD: comparar como texto ya da orden cronológico.
                     // Si dos cierres son del mismo día, desempata el ID (lleva la hora de registro).
                     const porFecha = (a.Fecha || "").localeCompare(b.Fecha || "");
@@ -2774,14 +2816,24 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                   }).map((c, idx) => {
                     const neto = c.Ventas_Totales - c.Gastos_Extra;
                     return (
-                      <div key={idx} className="p-5 border border-slate-200 rounded-3xl bg-slate-50 hover:bg-slate-100/50 transition flex flex-col justify-between">
+                      <div key={idx} className={`p-5 border rounded-3xl transition flex flex-col justify-between ${
+                        c.Recaudado_Fisico
+                          ? "border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50/70"
+                          : "border-slate-200 bg-slate-50 hover:bg-slate-100/50"
+                      }`}>
                         <div className="space-y-3">
                           <div className="flex justify-between items-center pb-2 border-b border-slate-200">
                             <span className="font-extrabold text-slate-800 text-sm flex items-center gap-1.5">
                               🏪 Tienda {c.Sucursal}
                             </span>
-                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-700 font-bold text-[9px] rounded-full uppercase tracking-wider">
-                              Pendiente
+                            {/* La etiqueta decía "Pendiente" en toda tarjeta, porque la
+                                lista solo traía pendientes. Ahora dice lo que es. */}
+                            <span className={`px-2.5 py-1 font-bold text-[9px] rounded-full uppercase tracking-wider ${
+                              c.Recaudado_Fisico
+                                ? "bg-emerald-500/10 text-emerald-700"
+                                : "bg-amber-500/10 text-amber-700"
+                            }`}>
+                              {c.Recaudado_Fisico ? "Recaudado" : "Pendiente"}
                             </span>
                           </div>
 
