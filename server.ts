@@ -1126,9 +1126,18 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
     // Al desmarcar se saca del libro tanto la entrada al monedero central como
     // la salida del monedero de la sucursal. El saldo se lee del libro, así que
     // si quedaran, la plata seguiría contada con el cierre otra vez pendiente.
+    //
+    // Solo los movimientos DE LA RECOLECCIÓN. El cierre deja además su propio
+    // movimiento ("Cierre de Caja - Efectivo neto registrado"), que representa
+    // la venta del día y no tiene nada que ver con haberla recogido: borrarlo
+    // hacía desaparecer el cierre del historial de monederos aunque siguiera
+    // apareciendo en los recibos.
     if (!isConfirmed) {
+      const esDeRecoleccion = (d: string) =>
+        d.includes("Recolección") || d.includes("Retiro de efectivo") || d.includes("Retiro parcial");
       const sobrante = db.walletTransactions.filter(
         (t) => t && String(t.Descripcion || "").includes(updatedClosure.ID_Cierre) &&
+          esDeRecoleccion(String(t.Descripcion || "")) &&
           (String(t.Sucursal || "") === "Central / Nequi" || norm(t.Sucursal) === norm(updatedClosure.Sucursal))
       );
       for (const t of sobrante) {
