@@ -555,6 +555,47 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [reconcileModalLoading, setReconcileModalLoading] = useState<boolean>(false);
 
   /**
+   * Identificador del cierre, si esta descripción es la del movimiento BASE que
+   * genera cada cierre ("Cierre de Caja - Efectivo neto registrado (ID)").
+   *
+   * Ese movimiento va entre paréntesis, no entre corchetes como las
+   * recolecciones — a propósito, para poder distinguirlo aquí: borrar solo esa
+   * línea con el endpoint genérico del monedero dejaría el cierre huérfano (ya
+   * pasó una vez). Por eso, para ese caso, el botón de esta pantalla no borra el
+   * movimiento suelto: elimina el cierre completo, que se lleva consigo esa
+   * línea y cualquier otra que haya generado.
+   */
+  const idDelCierreBase = (desc: string): string | null => {
+    const m = /^Cierre de Caja - Efectivo neto registrado \(([^)]+)\)/.exec(desc || "");
+    return m ? m[1] : null;
+  };
+
+  /** Borra un movimiento suelto del monedero (gasto, ingreso manual, recolección). */
+  const borrarMovimientoMonedero = (t: WalletTransaction) => {
+    const esIngreso = t.Tipo_Movimiento === "Ingreso";
+    setCustomConfirm({
+      isOpen: true,
+      title: "Eliminar movimiento de monedero",
+      message: `Se eliminará este movimiento de ${t.Sucursal} del ${t.Fecha}: ${esIngreso ? "+" : "-"}${cop(t.Valor)} — "${t.Descripcion}".\n\nSe guarda un respaldo automático antes de borrar. ¿Continuar?`,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/wallet/transaction/${encodeURIComponent(t.ID_Transaccion || "")}`, { method: "DELETE" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "No se pudo eliminar el movimiento.");
+          setSuccessMsg(
+            data.cierreLiberado
+              ? `Movimiento eliminado. El cierre ${data.cierreLiberado} volvió a quedar pendiente de recolección.`
+              : "Movimiento de monedero eliminado."
+          );
+          await fetchAdminSubData();
+        } catch (err: any) {
+          setErrorMsg(err.message);
+        }
+      },
+    });
+  };
+
+  /**
    * Elimina un cierre y los movimientos de monedero que generó.
    *
    * La confirmación muestra el monto a propósito: borrar un cierre con plata
@@ -9287,6 +9328,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           <th className="py-3 px-3 min-w-[260px]">Descripción</th>
                           <th className="py-3 px-3">Responsable</th>
                           <th className="py-3 px-3">Estado</th>
+                          <th className="py-3 px-3 text-center">Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -9338,6 +9380,32 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                 }`}>
                                   {t.Estado === "Reconciliado" ? "Confirmado" : "Pendiente"}
                                 </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {(() => {
+                                  const idCierreBase = idDelCierreBase(t.Descripcion || "");
+                                  const cierreDelMovimiento = idCierreBase
+                                    ? closures.find((c) => c.ID_Cierre === idCierreBase)
+                                    : null;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        cierreDelMovimiento
+                                          ? borrarCierre(cierreDelMovimiento)
+                                          : borrarMovimientoMonedero(t)
+                                      }
+                                      title={
+                                        cierreDelMovimiento
+                                          ? "Este movimiento viene del cierre de caja: elimina el cierre completo"
+                                          : "Eliminar este movimiento"
+                                      }
+                                      className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-150 rounded-lg inline-flex items-center justify-center cursor-pointer transition"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           );
