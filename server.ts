@@ -1293,6 +1293,44 @@ app.put("/api/closures/reconcile", requireRole("Admin", "AdminSucursal", "Compra
  *
  * Respalda antes de tocar nada: si el respaldo falla, no se borra.
  */
+/**
+ * Corrige a mano cuánto de un cierre está recaudado, sin mover plata.
+ *
+ * Las rutas normales de recaudo (individual y en bloque) siempre crean un
+ * movimiento nuevo en el monedero, porque asumen que están registrando una
+ * recolección que ocurre ahora. Eso está bien para el trabajo del día, pero es
+ * el ayudante equivocado para corregir un dato histórico — usarlas para eso
+ * duplica el dinero (se creó y se tuvo que revertir un caso así).
+ *
+ * Este endpoint es solo para eso: ajustar el número sin tocar el monedero.
+ */
+app.put("/api/closures/:id/monto-recaudado", requireRole("Admin"), async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.id).trim();
+    const idx = (db.closures || []).findIndex((c) => c && c.ID_Cierre === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Cierre no encontrado" });
+    }
+    const cierre = db.closures[idx];
+    if (!puedeVerSucursal(req, cierre.Sucursal)) {
+      return res.status(403).json({ error: "No puedes corregir cierres de esta sucursal." });
+    }
+
+    const neto = (cierre.Ventas_Totales || 0) - (cierre.Gastos_Extra || 0);
+    const monto = Math.max(0, Math.min(neto, Number(req.body?.montoRecaudado) || 0));
+
+    await respaldarAntesDeBorrar(`corregir el monto recaudado del cierre ${id}`);
+    cierre.Monto_Recaudado = monto;
+    cierre.Recaudado_Fisico = monto >= neto;
+    await saveDb(db, ["closures"]);
+
+    res.json({ success: true, cierre });
+  } catch (err: any) {
+    console.error("Error al corregir monto recaudado:", err);
+    res.status(500).json({ error: "No se pudo corregir el cierre: " + (err?.message || String(err)) });
+  }
+});
+
 app.delete("/api/closures/:id", requireRole("Admin"), async (req, res) => {
   try {
     const id = decodeURIComponent(req.params.id).trim();
