@@ -456,14 +456,16 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         ctx.fillStyle = "#064e3b";
         ctx.fillRect(0, yFooter, width, footerHeight);
 
+        // El valor total ya no se imprime en la imagen: se calculaba sobre el
+        // costo guardado en el pedido (Costo_Momento), que puede quedar
+        // desactualizado si el precio de compra cambió después de que la
+        // sucursal pidió — mostraba entonces el valor del pedido anterior, no
+        // el de hoy. El detalle por producto (cantidad y proveedor) sigue
+        // completo; el total se concilia en el Reporte de Compras del admin.
         ctx.fillStyle = "#ffffff";
         ctx.textAlign = "left";
         ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillText(`VALOR TOTAL DEL PEDIDO - PROVEEDOR (${provName}):`, 30, yFooter + 38);
-
-        ctx.fillStyle = "#34d399";
-        ctx.font = "900 22px monospace";
-        ctx.fillText(cop(totalCost), 30, yFooter + 70);
+        ctx.fillText(`PEDIDO CONSOLIDADO - PROVEEDOR (${provName})`, 30, yFooter + 38);
 
         ctx.textAlign = "right";
         ctx.fillStyle = "#a7f3d0";

@@ -1053,7 +1053,7 @@ const ORDEN_POR_DEFECTO: Record<string, number> = {
   nobsa: 2,
   fira: 3,
   aquitania: 4,
-  "18sogamoso": 5,
+  "np": 5,
   hansel: 6,
 };
 

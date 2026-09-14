@@ -132,6 +132,11 @@ function revisarFoto(foto: any): string | null {
   return `La foto pesa ${kb} KB y el máximo es ${FOTO_MAXIMA_KB} KB. Vuelva a tomarla desde la aplicación para que se comprima sola.`;
 }
 
+/** Formatea un valor en pesos colombianos, para mensajes de error legibles. */
+function cop(valor: number): string {
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(valor || 0);
+}
+
 function parseQty(q: any): number {
   if (!q) return 0;
   const cleaned = String(q).trim().replace(",", ".").replace(/\s+/g, " ");
@@ -308,6 +313,78 @@ app.post("/api/admin/branch-configs", async (req, res) => {
 
   await saveDb(db, ["branchConfigs"]);
   res.json({ success: true, config: db.branchConfigs[branch] });
+});
+
+/**
+ * Cambia el nombre de una sucursal en todo el sistema.
+ *
+ * El nombre es la llave que usa cada tabla para agrupar sus datos — cierres,
+ * pedidos, monedero, nómina, la configuración misma. No hay una lista de
+ * pantallas que "mostrar diferente": se renombra la sucursal una sola vez aquí
+ * y cada tabla la hereda porque todas leen el nombre desde los mismos datos.
+ *
+ * Respalda antes de tocar nada.
+ */
+app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) => {
+  try {
+    const desde = String(req.body?.desde || "").trim();
+    const hasta = String(req.body?.hasta || "").trim();
+    if (!desde || !hasta) {
+      return res.status(400).json({ error: "Se requiere el nombre actual y el nuevo nombre." });
+    }
+    if (norm(desde) === norm(hasta)) {
+      return res.status(400).json({ error: "El nombre nuevo es igual al actual." });
+    }
+
+    const clavesActuales = Object.keys(db.branchConfigs || {});
+    const claveOrigen = clavesActuales.find((k) => norm(k) === norm(desde));
+    if (!claveOrigen) {
+      return res.status(404).json({ error: `No existe una sucursal llamada "${desde}".` });
+    }
+    if (clavesActuales.some((k) => norm(k) === norm(hasta))) {
+      return res.status(400).json({ error: `Ya existe una sucursal llamada "${hasta}".` });
+    }
+
+    const respaldoId = await respaldarAntesDeBorrar(`renombrar sucursal ${desde} a ${hasta}`);
+
+    // La configuración de la sucursal: se mueve a la llave nueva y se borra la
+    // fila vieja (su client_id está derivado del nombre anterior).
+    const configVieja = db.branchConfigs[claveOrigen];
+    delete db.branchConfigs[claveOrigen];
+    db.branchConfigs[hasta] = configVieja;
+    await deleteRowByClientId("branch_configs", `brc_${norm(claveOrigen)}`);
+
+    // Cada colección que guarda "Sucursal" como texto. Se compara sin distinguir
+    // mayúsculas para no dejar registros viejos con la grafía anterior.
+    let filasActualizadas = 0;
+    const coleccionesConSucursal: Array<[any[], CollectionKey]> = [
+      [db.users, "users"],
+      [db.orders, "orders"],
+      [db.closures, "closures"],
+      [db.walletTransactions, "walletTransactions"],
+      [db.shrinkages, "shrinkages"],
+      [db.packagingMovements, "packagingMovements"],
+      [db.schedules, "schedules"],
+      [db.loans, "loans"],
+      [db.payroll, "payroll"],
+      [db.rates, "rates"],
+    ];
+    for (const [lista] of coleccionesConSucursal) {
+      for (const fila of lista || []) {
+        if (fila && norm(fila.Sucursal) === norm(desde)) {
+          fila.Sucursal = hasta;
+          filasActualizadas++;
+        }
+      }
+    }
+
+    await saveDb(db, ["branchConfigs", ...coleccionesConSucursal.map(([, k]) => k)]);
+
+    res.json({ success: true, respaldoPrevio: respaldoId, filasActualizadas, de: claveOrigen, a: hasta });
+  } catch (err: any) {
+    console.error("Error al renombrar sucursal:", err);
+    res.status(500).json({ error: "No se pudo renombrar la sucursal: " + (err?.message || String(err)) });
+  }
 });
 
 app.post("/api/users/update-password", requireRole("Admin"), async (req, res) => {
@@ -1065,6 +1142,16 @@ app.put("/api/closures", async (req, res) => {
       db.closures[index].Persona_Recogio = Persona_Recogio;
     }
 
+    // Si el cierre ya estaba marcado como recaudado, "recaudado" debe seguir
+    // significando "no queda nada pendiente". Sin esto, editar un cierre ya
+    // recogido (subir o bajar la venta declarada) dejaba Monto_Recaudado con
+    // el valor viejo: el cierre se veía completo pero en realidad quedaba una
+    // diferencia que ningún reporte volvía a pedir — así se descuadró Nobsa.
+    if (db.closures[index].Recaudado_Fisico) {
+      db.closures[index].Monto_Recaudado =
+        db.closures[index].Ventas_Totales - db.closures[index].Gastos_Extra;
+    }
+
     const updatedClosure = db.closures[index];
 
     // Update corresponding wallet transaction (vinculada por el mismo ID_Cierre en su descripción)
@@ -1268,32 +1355,40 @@ app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "
       (c) => c && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && !c.Recaudado_Fisico
     );
 
-    // Reconcile and subtract pending "Gasto" wallet transactions for this branch
+    // Gastos de caja menor (Monedero Bodega) todavía pendientes de esta sucursal.
     let totalPendingExpenses = 0;
+    const gastosAReconciliar: any[] = [];
     db.walletTransactions.forEach((t) => {
       if (t && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Gasto" && t.Estado === "Pendiente") {
         totalPendingExpenses += t.Valor;
-        t.Estado = "Reconciliado";
-      }
-    });
-
-    // Reconcile all corresponding wallet "Ingreso" transactions (from closures)
-    db.walletTransactions.forEach((t) => {
-      if (t && String(t.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && t.Tipo_Movimiento === "Ingreso" && t.Estado !== "Reconciliado") {
-        t.Estado = "Reconciliado";
+        gastosAReconciliar.push(t);
       }
     });
 
     let totalClosuresAmount = uncollectedClosures.reduce((acc, c) => acc + (c.Ventas_Totales - c.Gastos_Extra), 0);
-    
+    const maxRecogible = Math.max(0, totalClosuresAmount - totalPendingExpenses);
+
     let isPartial = false;
     let customCollected = 0;
     if (Monto_Recogido !== undefined && Monto_Recogido !== null && Monto_Recogido !== "") {
       customCollected = Number(Monto_Recogido);
       isPartial = true;
+      // Sin este tope, pedir recoger más de lo que la sucursal debe retiraba esa
+      // plata de más del monedero (y la sumaba a la Caja Central) sin que
+      // ningún cierre quedara marcado por ella: así se descuadró Nobsa, con
+      // $5.021.000 retirados de más que ningún cierre reclamaba.
+      if (customCollected > maxRecogible) {
+        return res.status(400).json({
+          error: `Esta sucursal solo tiene ${cop(maxRecogible)} pendientes de recoger. No se puede registrar un recaudo de ${cop(customCollected)}.`,
+        });
+      }
     } else {
-      customCollected = Math.max(0, totalClosuresAmount - totalPendingExpenses);
+      customCollected = maxRecogible;
     }
+
+    // Los cierres que este recaudo deja completamente saldados, para reconciliar
+    // solo SUS movimientos de monedero — no los de cierres que sigan pendientes.
+    const idsCerradosEnEstaPasada = new Set<string>();
 
     // Reconcile closures
     if (isPartial) {
@@ -1312,6 +1407,7 @@ app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "
         if (remainingToAllocate >= remainingForThisClosure) {
           c.Monto_Recaudado = netVal;
           c.Recaudado_Fisico = true;
+          idsCerradosEnEstaPasada.add(c.ID_Cierre);
           remainingToAllocate -= remainingForThisClosure;
         } else {
           c.Monto_Recaudado = currentRecaudado + remainingToAllocate;
@@ -1323,6 +1419,22 @@ app.post("/api/closures/bulk-reconcile", requireRole("Admin", "AdminSucursal", "
         if (c && String(c.Sucursal || "").toLowerCase().trim() === String(Sucursal || "").toLowerCase().trim() && !c.Recaudado_Fisico) {
           c.Recaudado_Fisico = true;
           c.Monto_Recaudado = c.Ventas_Totales - c.Gastos_Extra;
+          idsCerradosEnEstaPasada.add(c.ID_Cierre);
+        }
+      });
+    }
+
+    // Ahora sí se marcan como reconciliados: los gastos de caja menor que se
+    // acaban de cubrir, y solo el movimiento "Cierre de Caja" de los cierres
+    // que quedaron completamente saldados en esta pasada.
+    gastosAReconciliar.forEach((t) => { t.Estado = "Reconciliado"; });
+    if (idsCerradosEnEstaPasada.size > 0) {
+      db.walletTransactions.forEach((t) => {
+        if (
+          t && t.Tipo_Movimiento === "Ingreso" && t.Estado !== "Reconciliado" &&
+          [...idsCerradosEnEstaPasada].some((id) => String(t.Descripcion || "").includes(id))
+        ) {
+          t.Estado = "Reconciliado";
         }
       });
     }
