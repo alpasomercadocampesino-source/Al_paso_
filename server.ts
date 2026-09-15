@@ -338,7 +338,13 @@ app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) =>
 
     const clavesActuales = Object.keys(db.branchConfigs || {});
     const claveOrigen = clavesActuales.find((k) => norm(k) === norm(desde));
-    if (!claveOrigen) {
+    // El origen también es válido si solo queda la cuenta de caja con el nombre
+    // viejo (la configuración ya se movió en un renombrado anterior) — es
+    // justamente el caso de terminar de renombrar lo que quedó a medias.
+    const cuentaCajaOrigen = (db.users || []).find(
+      (u) => u && u.Rol === "Sucursal" && norm(u.Usuario) === norm(desde)
+    );
+    if (!claveOrigen && !cuentaCajaOrigen) {
       return res.status(404).json({ error: `No existe una sucursal llamada "${desde}".` });
     }
     if (clavesActuales.some((k) => norm(k) === norm(hasta))) {
@@ -349,10 +355,12 @@ app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) =>
 
     // La configuración de la sucursal: se mueve a la llave nueva y se borra la
     // fila vieja (su client_id está derivado del nombre anterior).
-    const configVieja = db.branchConfigs[claveOrigen];
-    delete db.branchConfigs[claveOrigen];
-    db.branchConfigs[hasta] = configVieja;
-    await deleteRowByClientId("branch_configs", `brc_${norm(claveOrigen)}`);
+    if (claveOrigen) {
+      const configVieja = db.branchConfigs[claveOrigen];
+      delete db.branchConfigs[claveOrigen];
+      db.branchConfigs[hasta] = configVieja;
+      await deleteRowByClientId("branch_configs", `brc_${norm(claveOrigen)}`);
+    }
 
     // Cada colección que guarda "Sucursal" como texto. Se compara sin distinguir
     // mayúsculas para no dejar registros viejos con la grafía anterior.
@@ -378,9 +386,23 @@ app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) =>
       }
     }
 
+    // La cuenta de la caja de esa sucursal (rol "Sucursal") no tiene un campo
+    // Sucursal aparte: su identidad ES su nombre de usuario, igual que Tibasosa,
+    // Nobsa, etc. Sin esto, la caja seguía entrando con el nombre viejo — por
+    // eso la pantalla de pedido de la propia sucursal mostraba un nombre y la
+    // planilla de compras otro.
+    let loginRenombrado: string | null = null;
+    const cuentaCaja = (db.users || []).find(
+      (u) => u && u.Rol === "Sucursal" && norm(u.Usuario) === norm(desde)
+    );
+    if (cuentaCaja) {
+      cuentaCaja.Usuario = hasta;
+      loginRenombrado = hasta;
+    }
+
     await saveDb(db, ["branchConfigs", ...coleccionesConSucursal.map(([, k]) => k)]);
 
-    res.json({ success: true, respaldoPrevio: respaldoId, filasActualizadas, de: claveOrigen, a: hasta });
+    res.json({ success: true, respaldoPrevio: respaldoId, filasActualizadas, de: claveOrigen, a: hasta, loginRenombrado });
   } catch (err: any) {
     console.error("Error al renombrar sucursal:", err);
     res.status(500).json({ error: "No se pudo renombrar la sucursal: " + (err?.message || String(err)) });
