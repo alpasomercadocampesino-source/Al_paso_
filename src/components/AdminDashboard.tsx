@@ -38,16 +38,17 @@ import {
 
 interface BranchConfigRowProps {
   branch: string;
-  initialConfig?: { baseCaja: number; recolectorPredeterminado: string; montoAlerta: number; orden?: number };
-  onSave: (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden: number) => Promise<void>;
+  initialConfig?: { baseCaja: number; recolectorPredeterminado: string; montoAlerta: number; orden?: number; verValorEnDescarga?: boolean };
+  onSave: (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden: number, verValorEnDescarga: boolean) => Promise<void>;
 }
 
 function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps) {
-  const defaultConf = { baseCaja: 0, recolectorPredeterminado: "Hamilton", montoAlerta: 500000, orden: 999 };
+  const defaultConf = { baseCaja: 0, recolectorPredeterminado: "Hamilton", montoAlerta: 500000, orden: 999, verValorEnDescarga: false };
   const conf = initialConfig || defaultConf;
 
   const [montoAlerta, setMontoAlerta] = useState(conf.montoAlerta);
   const [orden, setOrden] = useState(conf.orden ?? 999);
+  const [verValorEnDescarga, setVerValorEnDescarga] = useState(!!conf.verValorEnDescarga);
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
@@ -55,12 +56,13 @@ function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps
     if (initialConfig) {
       setMontoAlerta(initialConfig.montoAlerta);
       setOrden(initialConfig.orden ?? 999);
+      setVerValorEnDescarga(!!initialConfig.verValorEnDescarga);
     }
   }, [initialConfig]);
 
   const handleSave = async () => {
     setIsSaving(true);
-    await onSave(branch, 0, "Hamilton", montoAlerta, orden);
+    await onSave(branch, 0, "Hamilton", montoAlerta, orden, verValorEnDescarga);
     setIsSaving(false);
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2000);
@@ -95,6 +97,18 @@ function BranchConfigRow({ branch, initialConfig, onSave }: BranchConfigRowProps
             placeholder="500000"
           />
         </div>
+      </td>
+      {/* La descarga de "lo pedido" para las sucursales normales solo lleva
+          producto y cantidad — no deben conocer el precio de compra ni el
+          margen. Esta casilla es la excepción explícita, por sucursal. */}
+      <td className="py-3.5 px-3 text-center">
+        <input
+          type="checkbox"
+          checked={verValorEnDescarga}
+          onChange={(e) => setVerValorEnDescarga(e.target.checked)}
+          className="w-4 h-4 accent-slate-900 cursor-pointer"
+          title="Si se marca, la descarga de pedidos de esta sucursal incluye el valor de compra."
+        />
       </td>
       <td className="py-3.5 px-3 text-right">
         <button
@@ -465,12 +479,12 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     }
   };
 
-  const handleSaveBranchConfig = async (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden?: number) => {
+  const handleSaveBranchConfig = async (branch: string, baseCaja: number, recolectorPredeterminado: string, montoAlerta: number, orden?: number, verValorEnDescarga?: boolean) => {
     try {
       const res = await fetch("/api/admin/branch-configs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch, baseCaja, recolectorPredeterminado, montoAlerta, orden }),
+        body: JSON.stringify({ branch, baseCaja, recolectorPredeterminado, montoAlerta, orden, verValorEnDescarga }),
       });
       if (res.ok) {
         fetchBranchConfigs();
@@ -1815,7 +1829,11 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   } | null>(null);
 
   // Master Matrix states
-  const [matrixDate, setMatrixDate] = useState(new Date().toLocaleDateString('sv'));
+  // El día de trabajo del catálogo, en la fecha de Colombia — no la del
+  // reloj del navegador. Si la máquina no está en hora de Colombia, esta
+  // fecha no coincidía con el día en que de verdad se guardaron los cambios
+  // de precio, y "Precios Nuevos" se veía vacío aunque sí hubiera cambios.
+  const [matrixDate, setMatrixDate] = useState(getColombiaDate());
   const [matrixOrders, setMatrixOrders] = useState<any[]>([]);
   const [matrixEdits, setMatrixEdits] = useState<{ [code: string]: any }>({});
   const [matrixSearch, setMatrixSearch] = useState("");
@@ -1825,7 +1843,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // Provider Accounts and CSV Import states
   const [csvTextInput, setCsvTextInput] = useState("");
-  const [accountsDate, setAccountsDate] = useState(new Date().toLocaleDateString('sv'));
+  const [accountsDate, setAccountsDate] = useState(getColombiaDate());
   const [accountsOrders, setAccountsOrders] = useState<any[]>([]);
   const [activeProviderReceipt, setActiveProviderReceipt] = useState<{
     proveedor: string;
@@ -2314,7 +2332,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
    * Solo lleva precio de venta: la sucursal no ve costo de compra ni margen.
    */
   const productosConPrecioNuevo = (() => {
-    const porCodigo = new Map<string, { Producto: string; ventaAnterior: number; ventaNueva: number }>();
+    const porCodigo = new Map<string, { Producto: string; ventaAnterior: number; ventaNueva: number; enviar: boolean }>();
 
     // El historial guarda la hora en UTC. Comparar el texto crudo dejaba fuera
     // todo lo cambiado después de las 7pm en Colombia: a esa hora ya es el día
@@ -2334,11 +2352,16 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       if (ventaNueva <= 0 || ventaNueva === ventaAnterior) continue;
 
       const previo = porCodigo.get(h.Codigo);
+      // Si CUALQUIER cambio del día para este producto quedó marcado "no
+      // enviar", el producto entero no se envía — no tiene sentido avisar de
+      // un cambio a medias.
+      const noEnviarEsteCambio = h.Enviar_Precio === false;
       porCodigo.set(h.Codigo, {
         Producto: h.Producto,
         // Se conserva el precio con el que amaneció el día.
         ventaAnterior: previo ? previo.ventaAnterior : ventaAnterior,
         ventaNueva,
+        enviar: previo ? (previo.enviar && !noEnviarEsteCambio) : !noEnviarEsteCambio,
       });
     }
 
@@ -2351,6 +2374,28 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       .filter((p) => p.ventaNueva !== p.ventaAnterior)
       .sort((a, b) => a.Producto.localeCompare(b.Producto, "es", { sensitivity: "base" }));
   })();
+
+  // Lo que de verdad se manda: descarta lo que se marcó "no enviar" (un
+  // cambio real pero menor, que no vale la pena avisar).
+  const productosParaEnviar = productosConPrecioNuevo.filter((p) => p.enviar);
+
+  /** Marca (o desmarca) si un producto se incluye en el envío de precios nuevos. */
+  const alternarEnvioPrecio = async (codigo: string, enviar: boolean) => {
+    try {
+      const res = await fetch("/api/price-history/enviar", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo, fecha: matrixDate, enviar }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "No se pudo actualizar.");
+      }
+      await fetchPriceHistory();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    }
+  };
 
   /**
    * Descarga el Catálogo Maestro en Excel tal como está en pantalla: respeta la
@@ -4109,7 +4154,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                 <button
                   type="button"
                   onClick={() => {
-                    if (productosConPrecioNuevo.length === 0) {
+                    if (productosParaEnviar.length === 0) {
                       setErrorMsg("No hay cambios de precio de venta para enviar hoy.");
                       return;
                     }
@@ -4118,7 +4163,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
                 >
                   <Camera className="w-4 h-4" />
-                  Enviar precios nuevos ({productosConPrecioNuevo.length})
+                  Enviar precios nuevos ({productosParaEnviar.length})
                 </button>
               </div>
             </div>
@@ -4544,6 +4589,35 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                   }`}></span>
                                 </span>
                               )}
+                            </div>
+                            {/* ¿El precio de compra es por kilo directo, o por el
+                                bulto/canastilla entero? Sin elegirlo, la venta
+                                calculada sale inflada — el costo del bulto se toma
+                                como si ya fuera el costo por kilo. */}
+                            <div className="flex justify-end gap-0.5 mt-0.5">
+                              {([
+                                { valor: 1, etiqueta: "Kg" },
+                                { valor: row.Factor_Bulto, etiqueta: "Bto" },
+                                { valor: row.Factor_Canastilla, etiqueta: "Can" },
+                              ] as const).map((op) => (
+                                <button
+                                  key={op.etiqueta}
+                                  type="button"
+                                  title={
+                                    op.etiqueta === "Kg"
+                                      ? "El precio de compra ya es por kilo"
+                                      : `El precio de compra es por el ${op.etiqueta === "Bto" ? "bulto" : "canastilla"} entero (${op.valor} Kg)`
+                                  }
+                                  onClick={() => handleMatrixEdit(row.Codigo, "ME", op.valor)}
+                                  className={`px-1 py-0.5 rounded text-[8px] font-bold cursor-pointer transition ${
+                                    row.ME === op.valor
+                                      ? "bg-slate-900 text-white"
+                                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                  }`}
+                                >
+                                  {op.etiqueta}
+                                </button>
+                              ))}
                             </div>
                           </td>
 
@@ -7331,6 +7405,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                       <th className="py-3 px-3" title="Posición en todas las tablas y selectores. Menor número, primero.">Orden</th>
                       <th className="py-3 px-3">Recolector Autorizado</th>
                       <th className="py-3 px-3">Límite Alerta Efectivo (COP)</th>
+                      <th className="py-3 px-3 text-center" title="Si se marca, la descarga de 'lo pedido' para esta sucursal incluye el valor de compra.">Ver Valor en Descarga</th>
                       <th className="py-3 px-3 text-right">Acción</th>
                     </tr>
                   </thead>
@@ -9040,8 +9115,8 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <button
                     type="button"
                     onClick={() => {
-                      if (productosConPrecioNuevo.length === 0) {
-                        setErrorMsg("No hay cambios de precio de venta en esa fecha.");
+                      if (productosParaEnviar.length === 0) {
+                        setErrorMsg("No hay cambios de precio de venta marcados para enviar en esa fecha.");
                         return;
                       }
                       setShowPriceReceipt(true);
@@ -9049,7 +9124,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                     className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 cursor-pointer transition shadow-xs"
                   >
                     <Camera className="w-4 h-4" />
-                    Generar imagen para enviar
+                    Generar imagen para enviar ({productosParaEnviar.length})
                   </button>
                 </div>
               </div>
@@ -9099,6 +9174,9 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           <th className="py-3 px-2 text-right">Precio anterior</th>
                           <th className="py-3 px-2 text-right">Precio nuevo</th>
                           <th className="py-3 px-2 text-right">Diferencia</th>
+                          <th className="py-3 px-2 text-center" title="Un cambio real pero menor no tiene por qué avisarse a las tiendas.">
+                            ¿Enviar?
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -9106,7 +9184,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                           const subio = p.ventaNueva > p.ventaAnterior;
                           const dif = p.ventaNueva - p.ventaAnterior;
                           return (
-                            <tr key={p.Codigo} className="border-b border-slate-50 hover:bg-slate-50/60 transition">
+                            <tr key={p.Codigo} className={`border-b border-slate-50 hover:bg-slate-50/60 transition ${!p.enviar ? "opacity-40" : ""}`}>
                               <td className="py-2 px-2 font-bold text-slate-800">{p.Producto}</td>
                               <td className="py-2 px-2 text-slate-400 font-semibold">{p.Medida}</td>
                               <td className="py-2 px-2 text-right font-mono text-slate-400 line-through">
@@ -9117,6 +9195,20 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                               </td>
                               <td className={`py-2 px-2 text-right font-mono font-bold ${subio ? "text-rose-500" : "text-emerald-500"}`}>
                                 {subio ? "▲ +" : "▼ "}{cop(Math.abs(dif))}
+                              </td>
+                              <td className="py-2 px-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => alternarEnvioPrecio(p.Codigo, !p.enviar)}
+                                  title={p.enviar ? "Se enviará. Clic para no avisar este cambio." : "No se enviará. Clic para incluirlo."}
+                                  className={`px-3 py-1 rounded-full text-[10px] font-black cursor-pointer transition ${
+                                    p.enviar
+                                      ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                                      : "bg-slate-150 text-slate-500 hover:bg-slate-200"
+                                  }`}
+                                >
+                                  {p.enviar ? "Sí" : "No"}
+                                </button>
                               </td>
                             </tr>
                           );
@@ -10402,7 +10494,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                     </tr>
                   </thead>
                   <tbody>
-                    {productosConPrecioNuevo.map((p) => {
+                    {productosParaEnviar.map((p) => {
                       const subio = p.ventaNueva > p.ventaAnterior;
                       return (
                         <tr key={p.Codigo} className="border-b border-slate-100">
@@ -10431,7 +10523,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
                 <div className="border-t-2 border-dashed border-slate-300 mt-4 pt-3 text-center">
                   <p className="text-[11px] font-black text-slate-700">
-                    {productosConPrecioNuevo.length} producto(s) con precio nuevo
+                    {productosParaEnviar.length} producto(s) con precio nuevo
                   </p>
                   <p className="text-[9px] text-slate-400 font-semibold mt-1">
                     Estos son los precios de venta al público. Aplican desde hoy.

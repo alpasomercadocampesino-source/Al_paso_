@@ -115,6 +115,9 @@ export default function CompradorDashboard({ username, isAdminView = false, last
   // Sucursales activas. Vienen del servidor (no de una lista fija en el código)
   // para que una sucursal nueva aparezca sola, sin tener que tocar el código.
   const [sucursales, setSucursales] = useState<string[]>(DEFAULT_BRANCHES);
+  // La configuración completa (no solo los nombres): de aquí sale, por
+  // sucursal, si su descarga de pedidos incluye el valor de compra.
+  const [branchConfigsCompleto, setBranchConfigsCompleto] = useState<Record<string, { verValorEnDescarga?: boolean }>>({});
 
   // El servidor lee el CSV pegado por POSICIÓN de columna, así que el ejemplo
   // tiene que salir de la misma lista de sucursales. Si aquí faltara una, lo
@@ -134,6 +137,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         const cfg = await res.json();
         const nombres = Object.keys(cfg || {});
         if (vivo && nombres.length > 0) setSucursales(nombres);
+        if (vivo) setBranchConfigsCompleto(cfg || {});
       } catch {
         /* sin red: se sigue con la lista por defecto */
       }
@@ -861,6 +865,57 @@ export default function CompradorDashboard({ username, isAdminView = false, last
     }
   };
 
+  /**
+   * Descarga, en un solo Excel, lo que le llegó a cada sucursal ese día — un
+   * hoja por sucursal, lista para reenviarle a cada punto.
+   *
+   * Las sucursales normales no deben conocer el precio de compra ni el margen,
+   * así que sus hojas solo llevan producto y cantidad. La sucursal que se haya
+   * marcado explícitamente en "Ver Valor en Descarga" (Configuración de
+   * Alertas de Recaudos, en Efectivo & Monedero) también recibe el valor.
+   */
+  const handleExportPorSucursal = () => {
+    const filas = plazaMatrixData;
+    if (filas.length === 0) {
+      setErrorMsg("No hay pedidos para exportar en esta fecha.");
+      return;
+    }
+
+    const libro = XLSX.utils.book_new();
+    let algunaHoja = false;
+
+    for (const sucursal of sucursales) {
+      const conValor = !!branchConfigsCompleto[sucursal]?.verValorEnDescarga;
+      const delPunto = filas.filter((r) => parseQty(r[sucursal]) > 0);
+      if (delPunto.length === 0) continue;
+      algunaHoja = true;
+
+      const datos = delPunto.map((r) => {
+        const cantidad = r[sucursal];
+        const fila: Record<string, any> = { "PRODUCTO": r.Producto, "CANTIDAD": cantidad };
+        if (conValor) {
+          fila["VALOR"] = parseQty(cantidad) * (r.Precio_Compra || 0);
+        }
+        return fila;
+      });
+
+      const hoja = XLSX.utils.json_to_sheet(datos);
+      hoja["!cols"] = conValor
+        ? [{ wch: 32 }, { wch: 12 }, { wch: 14 }]
+        : [{ wch: 32 }, { wch: 12 }];
+      // El nombre de hoja de Excel no admite ciertos caracteres ni pasa de 31.
+      const nombreHoja = sucursal.replace(/[\\/*?:[\]]/g, "").slice(0, 31);
+      XLSX.utils.book_append_sheet(libro, hoja, nombreHoja || "Sucursal");
+    }
+
+    if (!algunaHoja) {
+      setErrorMsg("Ninguna sucursal tiene pedidos con cantidad en esta fecha.");
+      return;
+    }
+
+    XLSX.writeFile(libro, `Pedido_Por_Sucursal_${date}.xlsx`);
+  };
+
   const handleExportToXLSX = () => {
     // Chronological ascending calculate cumulative balance
     const sortedTxs = [...ledgerTransactions].sort((a, b) => a.Fecha.localeCompare(b.Fecha));
@@ -944,26 +999,21 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       [field]: value
     };
 
-    // If Hamilton edited "Costo_Momento" (PRECIO COMPRA), auto-calculate "Precio_Venta_Momento" ($ VENTA KL)
-    if (field === "Costo_Momento") {
+    // Recalcula "$ VENTA KL" cuando cambia el costo de compra o la unidad en que
+    // se compró (Kg directo / Bulto / Canastilla). Sin una unidad elegida a
+    // mano, se compra "por kg directo" (no se divide entre nada) — el mismo
+    // comportamiento de siempre para lo que de verdad se compra por kilo.
+    if (field === "Costo_Momento" || field === "ME") {
       const prod = products.find(p => p.Codigo === code);
       const utility = prod?.Utilidad !== undefined ? prod.Utilidad : 0.3;
-      
-      let currentME = 1;
-      if (prod) {
-        const medLower = (prod.Medida || "").toLowerCase();
-        if (medLower.includes("bulto")) {
-          currentME = prod.Factor_Bulto || 1;
-        } else if (medLower.includes("canastilla") || medLower.includes("guacal")) {
-          currentME = prod.Factor_Canastilla || 1;
-        }
-      }
-      
+      const currentME = updatedEdit.ME !== undefined ? parseFloat(updatedEdit.ME) || 1 : 1;
+      const costoActual = field === "Costo_Momento" ? value : (updatedEdit.Costo_Momento !== undefined ? updatedEdit.Costo_Momento : (prod?.Costo_Proveedor || 0));
+
       const mermaVal = prod?.Merma !== undefined ? prod.Merma : 0;
       const shrinkageFactor = (1 - mermaVal);
       const divisor = currentME * (shrinkageFactor > 0 ? shrinkageFactor : 1);
-      
-      updatedEdit.Precio_Venta_Momento = Math.round((value / divisor) * (1 + utility));
+
+      updatedEdit.Precio_Venta_Momento = Math.round((costoActual / divisor) * (1 + utility));
     }
 
     setMatrixEdits({
@@ -1351,17 +1401,15 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         const costoMomento = edit.Costo_Momento !== undefined ? edit.Costo_Momento : (o.Costo_Momento || prod?.Costo_Proveedor || 0);
         const proveedorName = edit.Proveedor !== undefined ? edit.Proveedor : (o.Proveedor || prod?.Proveedor || "Sin Proveedor");
 
-        let currentME = 1;
+        // La unidad en que se compró. Antes se adivinaba de la Medida del
+        // producto ("Kg", "Unidad"...), pero ningún producto la tiene escrita
+        // como "Bulto" o "Canastilla" — esa palabra describe cómo se VENDE, no
+        // cómo se COMPRÓ hoy. Sin una elección explícita, la conversión de peso
+        // nunca se activaba: el costo del bulto se tomaba como si ya fuera el
+        // costo por kilo, e inflaba el precio de venta calculado.
         const factorBulto = prod?.Factor_Bulto || 56;
         const factorCanastilla = prod?.Factor_Canastilla || 22;
-        if (prod) {
-          const medLower = (prod.Medida || "").toLowerCase();
-          if (medLower.includes("bulto")) {
-            currentME = factorBulto;
-          } else if (medLower.includes("canastilla") || medLower.includes("guacal")) {
-            currentME = factorCanastilla;
-          }
-        }
+        let currentME = edit.ME !== undefined ? parseFloat(edit.ME) || 1 : 1;
         const mermaVal = prod?.Merma !== undefined ? prod.Merma : 0;
         const shrinkageFactor = (1 - mermaVal);
         const divisor = currentME * (shrinkageFactor > 0 ? shrinkageFactor : 1);
@@ -1383,6 +1431,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
           Precio_Anterior: prevCosto,
           Cambio: 0,
           Me_1: String(currentME),
+          ME: currentME,
           Factor_Bulto: factorBulto,
           Factor_Canastilla: factorCanastilla,
           me_2: `${(mermaVal * 100).toFixed(0)}%`,
@@ -1735,6 +1784,15 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                   >
                     <Upload className="w-3.5 h-3.5" />
                     Cargar Pedido CSV
+                  </button>
+
+                  <button
+                    onClick={handleExportPorSucursal}
+                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100/80 text-indigo-800 border border-indigo-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                    title="Descarga en Excel, una hoja por sucursal, lo que le llegó a cada una — para reenviarles."
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Descargar por Sucursal
                   </button>
 
                   <button
@@ -2437,8 +2495,36 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                                   </span>
                                 )}
                               </div>
+                              {/* ¿Ese precio es por kilo directo, o por el bulto/canastilla
+                                  entero? Sin elegir, la venta calculada sale inflada — el
+                                  costo del bulto se toma como si ya fuera el costo por kilo. */}
+                              <div className="flex justify-center gap-0.5 mt-1">
+                                {([
+                                  { valor: 1, etiqueta: "Kg" },
+                                  { valor: row.Factor_Bulto, etiqueta: "Bto" },
+                                  { valor: row.Factor_Canastilla, etiqueta: "Can" },
+                                ] as const).map((op) => (
+                                  <button
+                                    key={op.etiqueta}
+                                    type="button"
+                                    title={
+                                      op.etiqueta === "Kg"
+                                        ? "El precio de compra ya es por kilo"
+                                        : `El precio de compra es por el ${op.etiqueta === "Bto" ? "bulto" : "canastilla"} entero (${op.valor} Kg)`
+                                    }
+                                    onClick={() => handleMatrixEdit(row.Codigo, "ME", op.valor)}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
+                                      row.ME === op.valor
+                                        ? "bg-slate-900 text-white"
+                                        : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                    }`}
+                                  >
+                                    {op.etiqueta}
+                                  </button>
+                                ))}
+                              </div>
                             </td>
-                            
+
                             {/* REQUERIDO */}
                             <td className="py-2.5 px-3 text-center font-extrabold text-slate-900 text-sm border-r border-slate-100">
                               {formatQty(row.Requerido)}

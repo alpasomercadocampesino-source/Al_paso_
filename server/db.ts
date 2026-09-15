@@ -372,6 +372,8 @@ export interface PriceHistory {
   Venta_Anterior: number;
   Venta_Nueva: number;
   Usuario: string;
+  /** Si este cambio se incluye en el recibo de precios nuevos. Por defecto sí. */
+  Enviar_Precio?: boolean;
 }
 
 export interface NequiExpense {
@@ -401,6 +403,12 @@ export interface BranchConfig {
   montoAlerta: number;
   /** Posición en tablas y selectores. Menor primero; empate se rompe por nombre. */
   orden: number;
+  /**
+   * Si la descarga de "lo pedido" para esta sucursal incluye el valor de
+   * compra. Las sucursales normales solo ven producto y cantidad — no deben
+   * conocer el precio de compra ni el margen.
+   */
+  verValorEnDescarga?: boolean;
 }
 
 export interface DatabaseSchema {
@@ -1120,6 +1128,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       recolectorPredeterminado: r.recolectorPredeterminado ?? "",
       montoAlerta: r.montoAlerta ?? 0,
       orden: ordenDeSucursal(r.sucursal, r.orden),
+      verValorEnDescarga: !!r.verValorEnDescarga,
     };
   }
 
@@ -1167,6 +1176,7 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
     priceHistory: priceHistoryRows.map((h) => tagId({
       Fecha_Hora: h.fechaHora, Codigo: h.codigo, Producto: h.producto, Costo_Anterior: h.costoAnterior ?? 0, Costo_Nuevo: h.costoNuevo ?? 0,
       Venta_Anterior: h.ventaAnterior ?? 0, Venta_Nueva: h.ventaNueva ?? 0, Usuario: h.usuario || "",
+      Enviar_Precio: h.enviarPrecio !== false,
     } as PriceHistory, h.clientId)),
     nequiExpenses: nequiRows.map((n) => tagId({
       ID_Gasto: n.idGasto || "", Fecha: n.fecha, Sucursal: n.sucursal, Valor_Gasto: n.valorGasto ?? 0, Descripcion_Gasto: n.descripcionGasto || "",
@@ -1194,6 +1204,8 @@ async function asegurarColumnas(): Promise<void> {
     ["orders", "recibido_por", "TEXT DEFAULT ''"],
     ["orders", "recibido_fecha", "TEXT DEFAULT ''"],
     ["branch_configs", "orden", "INTEGER DEFAULT 999"],
+    ["price_histories", "enviar_precio", "BOOLEAN DEFAULT TRUE"],
+    ["branch_configs", "ver_valor_en_descarga", "BOOLEAN DEFAULT FALSE"],
   ];
   for (const [tabla, columna, tipo] of columnas) {
     try {
@@ -1330,6 +1342,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
     await upsertRows(tx, "price_histories", "client_id", db.priceHistory.map((h) => ({
       client_id: (h as any)._id, fecha_hora: h.Fecha_Hora, codigo: h.Codigo, producto: h.Producto, costo_anterior: h.Costo_Anterior, costo_nuevo: h.Costo_Nuevo,
       venta_anterior: h.Venta_Anterior, venta_nueva: h.Venta_Nueva, usuario: h.Usuario,
+      enviar_precio: h.Enviar_Precio !== false,
     })));
   },
   nequiExpenses: async (db, tx) => {
@@ -1348,7 +1361,7 @@ const TABLE_SYNCERS: Record<CollectionKey, (db: DatabaseSchema, tx: any) => Prom
   branchConfigs: async (db, tx) => {
     const configs = Object.entries(db.branchConfigs || {});
     await upsertRows(tx, "branch_configs", "client_id", configs.map(([sucursal, cfg]) => ({
-      client_id: `brc_${sucursal.toLowerCase().trim()}`, sucursal, base_caja: cfg.baseCaja, recolector_predeterminado: cfg.recolectorPredeterminado, monto_alerta: cfg.montoAlerta, orden: ordenDeSucursal(sucursal, cfg.orden),
+      client_id: `brc_${sucursal.toLowerCase().trim()}`, sucursal, base_caja: cfg.baseCaja, recolector_predeterminado: cfg.recolectorPredeterminado, monto_alerta: cfg.montoAlerta, orden: ordenDeSucursal(sucursal, cfg.orden), ver_valor_en_descarga: !!cfg.verValorEnDescarga,
     })));
   },
 };

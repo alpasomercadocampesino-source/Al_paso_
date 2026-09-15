@@ -156,6 +156,8 @@ export interface PriceHistory {
   Venta_Anterior: number;
   Venta_Nueva: number;
   Usuario: string;
+  /** Si este cambio se incluye en el recibo de precios nuevos. Por defecto sí. */
+  Enviar_Precio?: boolean;
 }
 
 export interface SyncLog {

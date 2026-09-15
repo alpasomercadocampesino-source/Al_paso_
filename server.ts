@@ -95,6 +95,15 @@ function getColombiaDate(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 }
 
+/** Convierte una marca de tiempo cualquiera (guardada en UTC) al día de Colombia. */
+function fechaColombiaDe(isoUtc: string): string {
+  try {
+    return new Date(isoUtc).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  } catch {
+    return (isoUtc || "").slice(0, 10);
+  }
+}
+
 function getColombiaYesterdayDate(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -284,7 +293,7 @@ app.get("/api/admin/branch-configs", async (req, res) => {
 });
 
 app.post("/api/admin/branch-configs", async (req, res) => {
-  const { branch, baseCaja, recolectorPredeterminado, montoAlerta, orden } = req.body;
+  const { branch, baseCaja, recolectorPredeterminado, montoAlerta, orden, verValorEnDescarga } = req.body;
   if (!branch) {
     return res.status(400).json({ error: "Sucursal requerida" });
   }
@@ -309,6 +318,10 @@ app.post("/api/admin/branch-configs", async (req, res) => {
     recolectorPredeterminado: String(recolectorPredeterminado || "Cualquiera"),
     montoAlerta: Number(montoAlerta) || 0,
     orden: posicion,
+    // Si no llega en la petición, se conserva lo que ya tenía — igual que la
+    // posición: guardar el monto de alerta no debe quitarle a una sucursal el
+    // permiso de ver valores que ya tenía.
+    verValorEnDescarga: verValorEnDescarga !== undefined ? !!verValorEnDescarga : !!anterior?.verValorEnDescarga,
   };
 
   await saveDb(db, ["branchConfigs"]);
@@ -607,6 +620,35 @@ app.delete("/api/providers/:name", requireRole("Admin"), async (req, res) => {
 // Price History
 app.get("/api/price-history", (req, res) => {
   res.json(db.priceHistory);
+});
+
+/**
+ * Marca si el cambio de precio de un producto, en una fecha, se incluye en el
+ * recibo de "Precios Nuevos" para las sucursales.
+ *
+ * Antes la única forma de que un cambio real no se enviara era volver a
+ * escribir el precio viejo — con el riesgo de dejarlo mal puesto. Esto solo
+ * decide si se avisa, sin tocar el precio ni el histórico de auditoría.
+ */
+app.put("/api/price-history/enviar", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
+  const { codigo, fecha, enviar } = req.body;
+  if (!codigo || !fecha) {
+    return res.status(400).json({ error: "Se requiere el código del producto y la fecha." });
+  }
+
+  let filasTocadas = 0;
+  for (const h of db.priceHistory) {
+    if (h.Codigo === codigo && fechaColombiaDe(h.Fecha_Hora) === fecha) {
+      h.Enviar_Precio = !!enviar;
+      filasTocadas++;
+    }
+  }
+  if (filasTocadas === 0) {
+    return res.status(404).json({ error: "No hay cambios de precio de ese producto en esa fecha." });
+  }
+
+  await saveDb(db, ["priceHistory"]);
+  res.json({ success: true, filasTocadas });
 });
 
 // Orders (Pedidos)

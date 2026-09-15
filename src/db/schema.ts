@@ -238,6 +238,11 @@ export const priceHistories = pgTable("price_histories", {
   ventaAnterior: doublePrecision("venta_anterior").default(0),
   ventaNueva: doublePrecision("venta_nueva").default(0),
   usuario: text("usuario").default(""),
+  // Si este cambio se incluye en el recibo de "Precios Nuevos" para las
+  // sucursales. Un cambio real pero irrelevante (subir $20) no tiene por qué
+  // avisarse; antes la única forma de excluirlo era volver a escribir el
+  // precio viejo, arriesgando que quedara mal puesto.
+  enviarPrecio: boolean("enviar_precio").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
@@ -282,6 +287,8 @@ export const branchConfigs = pgTable("branch_configs", {
   montoAlerta: doublePrecision("monto_alerta").default(0),
   // Posición en que la sucursal aparece en todas las tablas y selectores.
   orden: integer("orden").default(999),
+  // Si la descarga de "lo pedido" para esta sucursal incluye el valor de compra.
+  verValorEnDescarga: boolean("ver_valor_en_descarga").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }).enableRLS();
