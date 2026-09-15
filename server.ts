@@ -347,7 +347,9 @@ app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) =>
     if (!claveOrigen && !cuentaCajaOrigen) {
       return res.status(404).json({ error: `No existe una sucursal llamada "${desde}".` });
     }
-    if (clavesActuales.some((k) => norm(k) === norm(hasta))) {
+    // Si ya no hay configuración vieja que mover (solo queda el login por
+    // renombrar), que el destino ya exista es lo esperado, no un choque.
+    if (claveOrigen && clavesActuales.some((k) => norm(k) === norm(hasta))) {
       return res.status(400).json({ error: `Ya existe una sucursal llamada "${hasta}".` });
     }
 
