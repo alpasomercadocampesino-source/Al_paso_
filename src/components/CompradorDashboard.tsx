@@ -1071,7 +1071,12 @@ export default function CompradorDashboard({ username, isAdminView = false, last
             Costo_Momento: fields.Costo_Momento !== undefined ? fields.Costo_Momento : o.Costo_Momento,
             Precio_Venta_Momento: fields.Precio_Venta_Momento !== undefined ? fields.Precio_Venta_Momento : o.Precio_Venta_Momento,
             Proveedor: fields.Proveedor !== undefined ? fields.Proveedor : o.Proveedor,
-            Estado: "Comprado" // Auto-mark as purchased since price has been negotiated/entered!
+            // Antes se marcaba "Comprado" para TODA sucursal con un renglón de
+            // este producto, incluida una que nunca pidió nada (Cantidad 0) —
+            // quedaba viéndose como comprada, sin valor, solo porque alguien
+            // más editó el costo o la cantidad de otra sucursal ese mismo día.
+            // Solo se marca Comprado si de verdad hay algo pedido/comprado.
+            Estado: cantidadCompradaFinal > 0 ? "Comprado" : o.Estado
           }
         });
       });
@@ -1837,6 +1842,21 @@ export default function CompradorDashboard({ username, isAdminView = false, last
                   )}
                 </div>
               </div>
+
+              {/* Botón flotante: la tabla es larga y el de arriba queda fuera
+                  de vista al editar filas de más abajo, obligando a buscarlo
+                  con scroll cada vez. Este va fijo abajo mientras haya cambios
+                  sin guardar. */}
+              {Object.keys(matrixEdits).length > 0 && (
+                <button
+                  onClick={handleSavePlazaMatrix}
+                  disabled={loading}
+                  className="fixed bottom-6 right-6 z-50 px-5 py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-extrabold rounded-2xl text-sm flex items-center gap-2 shadow-xl shadow-emerald-900/30 cursor-pointer transition disabled:opacity-60"
+                >
+                  <Save className="w-4 h-4" />
+                  {loading ? "Guardando..." : `Guardar Matrix (${Object.keys(matrixEdits).length})`}
+                </button>
+              )}
 
               {/* Quick Jump Badges for previous dates with orders */}
               {allOrderDates.length > 0 && (
