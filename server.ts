@@ -460,13 +460,20 @@ app.post("/api/products", requireRole("Admin", "AdminSucursal", "Comprador"), as
 
   const cost = parseFloat(Costo_Proveedor) || 0;
   const util = parseFloat(Utilidad) || 0.3;
-  const venta = Math.round(cost * (1 + util));
+  const merma = parseFloat(Merma) || 0;
+  // Misma fórmula que el resto del sistema: el costo se divide entre lo que
+  // de verdad rinde después de la merma antes de aplicar la utilidad. Un
+  // producto nuevo con merma > 0 quedaba con el precio de venta calculado
+  // sin descontarla — la única pantalla de creación que la pide (Factores y
+  // Pesos) nunca reflejaba lo que el usuario acababa de escribir ahí.
+  const shrinkageFactor = merma < 1 ? (1 - merma) : 1;
+  const venta = Math.round((cost / shrinkageFactor) * (1 + util));
 
   const newProduct: Product = {
     Codigo,
     Producto,
     Medida: Medida || "Kg",
-    Merma: parseFloat(Merma) || 0,
+    Merma: merma,
     Utilidad: util,
     Proveedor: Proveedor || "Sin Proveedor",
     Celular: Celular || "",
@@ -2367,6 +2374,11 @@ app.post("/api/admin/import-csv-orders", requireRole("Admin", "Comprador"), asyn
       const nextNum = db.products.filter(p => p.Codigo.startsWith(codePrefix)).length + 1;
       const newCode = `${codePrefix}${nextNum}`;
       
+      // Misma fórmula que el resto del sistema: se descuenta la merma antes
+      // de aplicar la utilidad. Un producto nuevo creado desde este import
+      // siempre nace con 5% de merma, así que calcularlo sin descontarla
+      // dejaba el precio de venta inicial inflado.
+      const ventaInicial = Math.round(((purchaseCost || 1000) / 0.95) * 1.3);
       prod = {
         Codigo: newCode,
         Producto: productName,
@@ -2376,9 +2388,9 @@ app.post("/api/admin/import-csv-orders", requireRole("Admin", "Comprador"), asyn
         Proveedor: supplierName,
         Celular: "",
         Costo_Proveedor: purchaseCost || 1000,
-        Precio_Venta_Actual: Math.round((purchaseCost || 1000) * 1.3),
+        Precio_Venta_Actual: ventaInicial,
         Precio_Anterior: purchaseCost || 1000,
-        Venta_Anterior: Math.round((purchaseCost || 1000) * 1.3),
+        Venta_Anterior: ventaInicial,
         Factor_Bulto: 56,
         Factor_Canastilla: 22,
       };

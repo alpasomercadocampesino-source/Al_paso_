@@ -861,13 +861,14 @@ function loadInitialProducts(): Product[] {
       else if (cat === "G") costo = 3000;
       else if (cat === "E") costo = 500;
 
-      const precioVenta = Math.round(costo * (1 + util));
+      const merma = cat === "P" ? 0.05 : 0;
+      const precioVenta = Math.round((costo / (1 - merma)) * (1 + util));
 
       products.push({
         Codigo: codigo,
         Producto: producto,
         Medida: medida,
-        Merma: cat === "P" ? 0.05 : 0,
+        Merma: merma,
         Utilidad: util,
         Proveedor: proveedor,
         Celular: celular,
