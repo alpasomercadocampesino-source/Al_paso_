@@ -2638,7 +2638,21 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     const interval = setInterval(() => {
       fetchAdminSubData();
     }, 12000);
-    return () => clearInterval(interval);
+
+    // El navegador frena los setInterval de una pestaña en segundo plano —
+    // a veces hasta detenerlos del todo mientras no está a la vista. Si
+    // alguien deja el panel abierto de fondo por horas, los saldos se quedan
+    // congelados en lo que había la última vez que se refrescó. Al volver a
+    // la pestaña se refresca de una vez, sin esperar el próximo intervalo.
+    const alVolverVisible = () => {
+      if (document.visibilityState === "visible") fetchAdminSubData();
+    };
+    document.addEventListener("visibilitychange", alVolverVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", alVolverVisible);
+    };
   }, [adminMode, lastGlobalSync]);
 
   const fetchUsers = async () => {
