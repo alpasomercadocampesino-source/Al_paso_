@@ -1048,15 +1048,25 @@ export default function CompradorDashboard({ username, isAdminView = false, last
         const qtyKey = `${branch}_Qty`;
         const obsKey = `${branch}_Obs`;
 
-        const updatedQtyStr = fields[qtyKey] !== undefined ? String(fields[qtyKey]).trim() : String(o.Cantidad);
+        const qtyWasEdited = fields[qtyKey] !== undefined;
         const updatedNotes = fields[obsKey] !== undefined ? fields[obsKey] : o.Notas;
+
+        // Cantidad_Comprada solo se recalcula si ESTA sucursal fue editada ahora.
+        // Antes se reescribía siempre con lo SOLICITADO (Cantidad) para cualquier
+        // sucursal del mismo producto que no se estuviera tocando en este guardado
+        // — borrando en silencio compras ya confirmadas de otras sucursales cada
+        // vez que se editaba cualquier otro campo del producto (el costo, el
+        // proveedor, o la cantidad de una sucursal distinta).
+        const cantidadCompradaFinal = qtyWasEdited
+          ? parseQty(String(fields[qtyKey]).trim())
+          : (o.Estado === "Comprado" ? o.Cantidad_Comprada : parseQty(o.Cantidad));
 
         updates.push({
           ID_Pedido: o.ID_Pedido,
           Codigo: o.Codigo,
           fields: {
-            Cantidad: updatedQtyStr,
-            Cantidad_Comprada: parseQty(updatedQtyStr),
+            Cantidad: qtyWasEdited ? String(fields[qtyKey]).trim() : o.Cantidad,
+            Cantidad_Comprada: cantidadCompradaFinal,
             Notas: updatedNotes,
             Costo_Momento: fields.Costo_Momento !== undefined ? fields.Costo_Momento : o.Costo_Momento,
             Precio_Venta_Momento: fields.Precio_Venta_Momento !== undefined ? fields.Precio_Venta_Momento : o.Precio_Venta_Momento,
@@ -1450,8 +1460,13 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       if (!branch) return; // pedido de una sucursal que ya no está activa
       const edit = matrixEdits[code] || {};
 
+      // Si ya se compró, la base es lo REALMENTE comprado (Cantidad_Comprada),
+      // no lo solicitado (Cantidad) — si no, esta pantalla (y lo que de aquí
+      // se envía como "Total Proveedor") nunca reflejaba una compra que el
+      // comprador hubiera ajustado en un guardado anterior.
       const qtyEditada = edit[`${branch}_Qty`];
-      const currentQty = qtyEditada !== undefined ? parseQty(qtyEditada) : o.Cantidad;
+      const qtyBase = o.Estado === "Comprado" ? o.Cantidad_Comprada : o.Cantidad;
+      const currentQty = qtyEditada !== undefined ? parseQty(qtyEditada) : qtyBase;
       groupedRowsMap[code][branch] = currentQty;
 
       const obsEditada = edit[`${branch}_Obs`];
