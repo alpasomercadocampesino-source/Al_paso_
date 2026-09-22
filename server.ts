@@ -2,10 +2,9 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import bcrypt from "bcryptjs";
-import { createServer as createViteServer } from "vite";
-import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, sucursalesOrdenadas, ordenDeSucursal, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.ts";
-import { sendOrderSummaryEmail } from "./server/mailer.ts";
-import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.ts";
+import { initDb, saveDb as originalSaveDb, recordSyncLog, purgePastMonthsOrdersAndClosures, defaultBranchConfigs, sucursalesOrdenadas, ordenDeSucursal, deleteRowByClientId, truncateTables, getTableCounts, createBackup, listBackups, getBackup, restoreBackup, reloadFromPostgres, startAutomaticBackups, DatabaseSchema, CollectionKey, Order, DailyClosure, WalletTransaction, Shrinkage, PackagingMovement, EmployeeSchedule, EmployeeLoan, PayrollRecord, PriceHistory, Product, Provider } from "./server/db.js";
+import { sendOrderSummaryEmail } from "./server/mailer.js";
+import { crearToken, requireAuth, requireRole, type Rol } from "./server/auth.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -266,7 +265,7 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // User Management for Admin
-app.get("/api/users", requireRole("Admin"), (req, res) => {
+app.get("/api/users", requireRole("Admin"), (_req, res) => {
   // Nunca se devuelve el hash de la contraseña, ni siquiera al administrador.
   res.json(db.users.map((u) => ({ Usuario: u.Usuario, Rol: u.Rol, _id: (u as any)._id })));
 });
@@ -370,7 +369,7 @@ app.post("/api/admin/branches/rename", requireRole("Admin"), async (req, res) =>
 
     // La configuración de la sucursal: se mueve a la llave nueva y se borra la
     // fila vieja (su client_id está derivado del nombre anterior).
-    if (claveOrigen) {
+    if (claveOrigen && db.branchConfigs) {
       const configVieja = db.branchConfigs[claveOrigen];
       delete db.branchConfigs[claveOrigen];
       db.branchConfigs[hasta] = configVieja;
@@ -444,7 +443,7 @@ app.post("/api/users/update-password", requireRole("Admin"), async (req, res) =>
 });
 
 // Products
-app.get("/api/products", (req, res) => {
+app.get("/api/products", (_req, res) => {
   res.json(db.products);
 });
 
@@ -548,7 +547,7 @@ app.put("/api/products/:code", requireRole("Admin", "AdminSucursal", "Comprador"
 });
 
 // Providers
-app.get("/api/providers", (req, res) => {
+app.get("/api/providers", (_req, res) => {
   res.json(db.providers);
 });
 
@@ -625,7 +624,7 @@ app.delete("/api/providers/:name", requireRole("Admin"), async (req, res) => {
 });
 
 // Price History
-app.get("/api/price-history", (req, res) => {
+app.get("/api/price-history", (_req, res) => {
   res.json(db.priceHistory);
 });
 
@@ -835,9 +834,25 @@ app.post("/api/orders/verify-reception", async (req, res) => {
   res.json({ success: true, confirmados, desmarcados, total: marcados.size, responsable: quien });
 });
 
-app.post("/api/orders/bulk-update", async (req, res) => {
+// Campos que los clientes pueden cambiar por esta ruta. Un spread a ciegas de
+// update.fields dejaba que cualquier sesión autenticada inyectara columnas
+// (Kilos, Costo_Momento, Estado_Pago, ...) a pedidos de cualquier sucursal.
+const CAMPOS_EDITABLES_PEDIDO: (keyof Order)[] = [
+  "Cantidad",
+  "Cantidad_Comprada",
+  "Costo_Momento",
+  "Precio_Venta_Momento",
+  "Estado",
+  "Estado_Pago",
+  "Proveedor",
+  "Notas",
+  "Recibido_Sucursal",
+  "Recibido_Por",
+  "Recibido_Fecha",
+];
+app.post("/api/orders/bulk-update", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { updates } = req.body; // Array of { ID_Pedido, Codigo, fields }
-  if (!updates || !Array.isArray(updates)) {
+  if (!updates || !Array.isArray(updates) || updates.length > 2000) {
     return res.status(400).json({ error: "Actualizaciones inválidas" });
   }
 
@@ -846,19 +861,27 @@ app.post("/api/orders/bulk-update", async (req, res) => {
     const idx = db.orders.findIndex(
       (o) => o.ID_Pedido === update.ID_Pedido && o.Codigo === update.Codigo
     );
-    if (idx !== -1) {
-      db.orders[idx] = {
-        ...db.orders[idx],
-        ...update.fields,
-      };
-      updatedRecords.push(db.orders[idx]);
+    if (idx === -1) continue;
+
+    const target = db.orders[idx];
+    // Cada sesión solo toca pedidos de sucursales que puede ver.
+    if (!puedeVerSucursal(req, target.Sucursal, "pedidos")) continue;
+
+    const fields: Record<string, any> = {};
+    for (const c of CAMPOS_EDITABLES_PEDIDO) {
+      if (update.fields && update.fields[c] !== undefined) fields[c] = update.fields[c];
     }
+    if (Object.keys(fields).length === 0) continue;
+
+    db.orders[idx] = {
+      ...target,
+      ...fields,
+    };
+    updatedRecords.push(db.orders[idx]);
   }
 
   await saveDb(db, ["orders"]);
-  if (updatedRecords.length > 0) {
-  }
-  res.json({ success: true });
+  res.json({ success: true, actualizados: updatedRecords.length });
 });
 
 app.post("/api/admin/matrix-save", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
@@ -1060,7 +1083,7 @@ app.post("/api/admin/matrix-save", requireRole("Admin", "AdminSucursal", "Compra
           } else {
             // Create new order
             const oid = `PED-${sucursal.toUpperCase()}-${timestamp}`;
-            const newOrder = {
+            const newOrder: Order = {
               ID_Pedido: oid,
               Fecha: fecha,
               Sucursal: sucursal,
@@ -1665,6 +1688,7 @@ app.get("/api/wallet/:branch", (req, res) => {
     // como recogidos más los movimientos que no dijeran "Recolección Física", y
     // una recogida parcial no entraba por ninguna de las dos vías.
     const paidPayrollSum = filtrarPorSucursal(req, db.payroll || [], (p) => p && p.Sucursal)
+      .filter((p) => p?.Estado_Pago === "Pagado")
       .reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
 
     const privadas = sucursalesConAdminPropio();
@@ -1966,7 +1990,7 @@ app.post("/api/shrinkages", async (req, res) => {
 });
 
 // Packaging Assets (Canastillas / Estibas)
-app.get("/api/packaging", (req, res) => {
+app.get("/api/packaging", (_req, res) => {
   res.json(db.packagingMovements.sort((a, b) => b.Fecha.localeCompare(a.Fecha)));
 });
 
@@ -2261,12 +2285,12 @@ app.post("/api/payroll/generate", requireRole("Admin", "AdminSucursal"), async (
     Fecha: Fecha_Fin,
     Trabajador: Empleado,
     Sucursal: Sucursal || "Plaza",
-    Dias_Trabajados: finalDiasTrabajados,
-    Horas_Trabajadas: finalHorasTrabajadas,
+    Dias_Trabajados: finalDiasTrabajados ?? 0,
+    Horas_Trabajadas: finalHorasTrabajadas ?? 0,
     Pago_Base: finalPagoBase,
-    Pago_Horas: finalPagoHoras,
-    Prestamos_Descontados: finalPrestamosDescontados,
-    Total_Neto: finalTotalNeto,
+    Pago_Horas: finalPagoHoras ?? 0,
+    Prestamos_Descontados: finalPrestamosDescontados ?? 0,
+    Total_Neto: finalTotalNeto ?? 0,
     Estado_Pago: "Pendiente",
   };
 
@@ -2481,7 +2505,7 @@ async function respaldarAntesDeBorrar(motivo: string): Promise<number> {
   return id;
 }
 
-app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, res) => {
+app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (_req, res) => {
   try {
     // Red de seguridad: si esto falla, no se borra nada.
     const respaldoId = await respaldarAntesDeBorrar("limpiar datos operativos");
@@ -2522,7 +2546,7 @@ app.post("/api/admin/clear-operational-data", requireRole("Admin"), async (req, 
   }
 });
 
-app.post("/api/admin/clear-past-months-history", requireRole("Admin"), async (req, res) => {
+app.post("/api/admin/clear-past-months-history", requireRole("Admin"), async (_req, res) => {
   try {
     await respaldarAntesDeBorrar("limpiar históricos de meses anteriores");
     const result = await purgePastMonthsOrdersAndClosures(db);
@@ -2746,18 +2770,18 @@ app.post("/api/test/run", requireRole("Admin"), async (req, res) => {
 // ─────────────────────────────────────────────
 // SYNC LOGS ENDPOINTS
 // ─────────────────────────────────────────────
-app.get("/api/sync-logs", (req, res) => {
+app.get("/api/sync-logs", (_req, res) => {
   res.json(db.syncLogs || []);
 });
 
-app.post("/api/sync-logs/clear", requireRole("Admin"), async (req, res) => {
+app.post("/api/sync-logs/clear", requireRole("Admin"), async (_req, res) => {
   db.syncLogs = [];
   await truncateTables(["sync_logs"]);
   res.json({ success: true, message: "Historial de logs de sincronización limpiado correctamente." });
 });
 
 // ── Respaldos ──────────────────────────────────────────────
-app.get("/api/admin/backups", requireRole("Admin"), async (req, res) => {
+app.get("/api/admin/backups", requireRole("Admin"), async (_req, res) => {
   try {
     res.json(await listBackups());
   } catch (err: any) {
@@ -2766,7 +2790,7 @@ app.get("/api/admin/backups", requireRole("Admin"), async (req, res) => {
 });
 
 // Crea un respaldo manual bajo demanda (además del automático diario).
-app.post("/api/admin/backups", requireRole("Admin"), async (req, res) => {
+app.post("/api/admin/backups", requireRole("Admin"), async (_req, res) => {
   try {
     const { id, resumen } = await createBackup("manual");
     res.json({ success: true, id, resumen, message: "Respaldo creado correctamente." });
@@ -2863,7 +2887,7 @@ app.get("/api/health", async (req, res) => {
 // ─────────────────────────────────────────────
 // VITE OR STATIC MIDDLEWARE SETUP
 // ─────────────────────────────────────────────
-app.get("/logo_al_paso.png", (req, res) => {
+app.get("/logo_al_paso.png", (_req, res) => {
   res.sendFile(path.join(process.cwd(), "logo_al_paso.png"));
 });
 
@@ -2876,6 +2900,9 @@ async function startServer() {
 
   // 3. Iniciar middlewares frontend
   if (process.env.NODE_ENV !== "production") {
+    // vite solo se necesita en desarrollo; se importa dinámicamente para que el
+    // servidor de producción no dependa de un paquete que ni está declarado.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -2884,7 +2911,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

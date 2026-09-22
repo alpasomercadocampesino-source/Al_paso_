@@ -1,8 +1,9 @@
 import fs from "fs";
 import path from "path";
+import bcrypt from "bcryptjs";
 import { sql } from "drizzle-orm";
-import { db as pgDb } from "../src/db/index.ts";
-import * as schema from "../src/db/schema.ts";
+import { db as pgDb } from "../src/db/index.js";
+import * as schema from "../src/db/schema.js";
 
 // Upsert por fila (INSERT ... ON CONFLICT DO UPDATE), nunca DELETE+INSERT masivo.
 // Evita que un proceso con una foto vieja en memoria borre filas que otro proceso
@@ -117,13 +118,14 @@ export async function getBackup(id: number): Promise<any | null> {
 /**
  * Repuebla tablas desde un respaldo, SIN pisar lo que ya existe.
  *
- * Usa ON CONFLICT (client_id) DO NOTHING: cada fila del respaldo cuyo client_id
- * ya está en la tabla se ignora, y solo se reinsertan las que faltan. Así una
- * restauración es un relleno de huecos — recupera lo borrado por accidente y no
- * revierte ningún cambio legítimo posterior. Se omiten id y las marcas de tiempo
- * para que Postgres reasigne el serial y no choque con la secuencia.
+ * Usa ON CONFLICT DO NOTHING (sin columna): cada fila del respaldo que choque con
+ * cualquier restricción única (client_id, codigo, usuario, proveedor, id_cierre, ...)
+ * se ignora, y solo se reinsertan las que faltan. Antes se anclaba a client_id;
+ * una fila compartida con otro client_id (p. ej. un producto con el mismo código)
+ * hacía estallar el lote entero.
  *
- * Devuelve cuántas filas se reinsertaron por tabla.
+ * Todo corre dentro de una sola transacción: si una tabla falla se revierte todo,
+ * no queda una restauración a medias. Devuelve cuántas filas se reinsertaron por tabla.
  */
 export async function restoreBackup(
   id: number,
@@ -135,28 +137,30 @@ export async function restoreBackup(
   const OMITIR = new Set(["id", "created_at", "updated_at"]);
   const reinsertadas: Record<string, number> = {};
 
-  for (const tabla of tablas) {
-    const filas: any[] = Array.isArray(contenido[tabla]) ? contenido[tabla] : [];
-    if (filas.length === 0) { reinsertadas[tabla] = 0; continue; }
+  await pgDb.transaction(async (tx) => {
+    for (const tabla of tablas) {
+      const filas: any[] = Array.isArray(contenido[tabla]) ? contenido[tabla] : [];
+      if (filas.length === 0) { reinsertadas[tabla] = 0; continue; }
 
-    const columnas = Object.keys(filas[0]).filter((c) => !OMITIR.has(c));
-    const colIdents = sql.join(columnas.map((c) => sql.identifier(c)), sql.raw(", "));
+      const columnas = Object.keys(filas[0]).filter((c) => !OMITIR.has(c));
+      const colIdents = sql.join(columnas.map((c) => sql.identifier(c)), sql.raw(", "));
 
-    let total = 0;
-    const LOTE = 400;
-    for (let i = 0; i < filas.length; i += LOTE) {
-      const lote = filas.slice(i, i + LOTE);
-      const tuplas = sql.join(
-        lote.map((fila) => sql`(${sql.join(columnas.map((c) => sql`${fila[c] ?? null}`), sql.raw(", "))})`),
-        sql.raw(", ")
-      );
-      const res: any = await pgDb.execute(
-        sql`INSERT INTO ${sql.identifier(tabla)} (${colIdents}) VALUES ${tuplas} ON CONFLICT (client_id) DO NOTHING`
-      );
-      total += Number(res?.rowCount ?? 0);
+      let total = 0;
+      const LOTE = 400;
+      for (let i = 0; i < filas.length; i += LOTE) {
+        const lote = filas.slice(i, i + LOTE);
+        const tuplas = sql.join(
+          lote.map((fila) => sql`(${sql.join(columnas.map((c) => sql`${fila[c] ?? null}`), sql.raw(", "))})`),
+          sql.raw(", ")
+        );
+        const res: any = await tx.execute(
+          sql`INSERT INTO ${sql.identifier(tabla)} (${colIdents}) VALUES ${tuplas} ON CONFLICT DO NOTHING`
+        );
+        total += Number(res?.rowCount ?? 0);
+      }
+      reinsertadas[tabla] = total;
     }
-    reinsertadas[tabla] = total;
-  }
+  });
 
   return reinsertadas;
 }
@@ -430,10 +434,15 @@ export interface DatabaseSchema {
   branchConfigs?: { [branch: string]: BranchConfig };
 }
 
-// Elimina únicamente los pedidos y cierres de caja pertenecientes a meses pasados del año actual
+// Elimina únicamente los pedidos y cierres de caja pertenecientes a meses pasados del año actual.
+// Se acota al año en curso: sin el piso de enero, un `Fecha < currentMonthStart`
+// (string ISO) se llevaba también todos los meses de los años anteriores. Y no se
+// tocan los pedidos que sigan pendientes ni los cierres sin recoger — borrarlos
+// haría desaparecer plata que todavía no ha entrado a la caja central.
 export async function purgePastMonthsOrdersAndClosures(localDb: DatabaseSchema): Promise<{ deletedOrdersCount: number; deletedClosuresCount: number }> {
   const colombiaNow = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const currentMonthStart = colombiaNow.slice(0, 7) + "-01"; // Ej: "2026-08-01"
+  const currentYearStart = colombiaNow.slice(0, 4) + "-01-01"; // Ej: "2026-01-01"
 
   let deletedOrdersCount = 0;
   let deletedClosuresCount = 0;
@@ -441,19 +450,32 @@ export async function purgePastMonthsOrdersAndClosures(localDb: DatabaseSchema):
   // El sync ahora es upsert-por-fila (nunca DELETE+INSERT masivo), así que estas filas
   // hay que borrarlas explícitamente de Postgres — quitarlas del array en memoria no basta.
   if (Array.isArray(localDb.orders)) {
-    const initialOrders = localDb.orders.length;
-    const toRemove = localDb.orders.filter(o => o.Fecha && o.Fecha < currentMonthStart);
-    localDb.orders = localDb.orders.filter(o => !o.Fecha || o.Fecha >= currentMonthStart);
-    deletedOrdersCount = initialOrders - localDb.orders.length;
-    await Promise.all(toRemove.map(o => deleteRowByClientId("orders", (o as any)._id)));
+    const toRemove = localDb.orders.filter(
+      (o) =>
+        o &&
+        o.Fecha &&
+        o.Fecha >= currentYearStart &&
+        o.Fecha < currentMonthStart &&
+        (o.Estado || "Pendiente") !== "Pendiente" &&
+        (o.Estado_Pago || "Pendiente") !== "Pendiente"
+    );
+    localDb.orders = localDb.orders.filter((o) => !o || !toRemove.includes(o));
+    deletedOrdersCount = toRemove.length;
+    await Promise.all(toRemove.map((o) => deleteRowByClientId("orders", (o as any)._id)));
   }
 
   if (Array.isArray(localDb.closures)) {
-    const initialClosures = localDb.closures.length;
-    const toRemove = localDb.closures.filter(c => c.Fecha && c.Fecha < currentMonthStart);
-    localDb.closures = localDb.closures.filter(c => !c.Fecha || c.Fecha >= currentMonthStart);
-    deletedClosuresCount = initialClosures - localDb.closures.length;
-    await Promise.all(toRemove.map(c => deleteRowByClientId("closures", (c as any)._id)));
+    const toRemove = localDb.closures.filter(
+      (c) =>
+        c &&
+        c.Fecha &&
+        c.Fecha >= currentYearStart &&
+        c.Fecha < currentMonthStart &&
+        c.Recaudado_Fisico
+    );
+    localDb.closures = localDb.closures.filter((c) => !c || !toRemove.includes(c));
+    deletedClosuresCount = toRemove.length;
+    await Promise.all(toRemove.map((c) => deleteRowByClientId("closures", (c as any)._id)));
   }
 
   return { deletedOrdersCount, deletedClosuresCount };
@@ -800,14 +822,17 @@ const PROVIDER_SEED: Provider[] = [
 ];
 
 const USER_SEED: User[] = [
-  { Usuario: "Cris", Contraseña: "crisadmin2026", Rol: "Admin" },
-  { Usuario: "Hamilton", Contraseña: "hamiltoncomp2026", Rol: "Comprador" },
-  { Usuario: "Tibasosa", Contraseña: "tibasucursal2026", Rol: "Sucursal" },
-  { Usuario: "Nobsa", Contraseña: "nobsasucursal2026", Rol: "Sucursal" },
-  { Usuario: "Fira", Contraseña: "firasucursal2026", Rol: "Sucursal" },
-  { Usuario: "Aquitania", Contraseña: "aquitsucursal2026", Rol: "Sucursal" },
-  { Usuario: "Hansel", Contraseña: "hanselsucursal2026", Rol: "Sucursal" },
-  { Usuario: "mache", Contraseña: "macheadmin2026", Rol: "Admin" },
+  // Hasheadas en bcrypt al arrancar: el seed nunca vuelve a guardar la
+  // contraseña en texto plano en Postgres (antes viajaba literal hasta el
+  // primer login).
+  { Usuario: "Cris", Contraseña: bcrypt.hashSync("crisadmin2026", 10), Rol: "Admin" },
+  { Usuario: "Hamilton", Contraseña: bcrypt.hashSync("hamiltoncomp2026", 10), Rol: "Comprador" },
+  { Usuario: "Tibasosa", Contraseña: bcrypt.hashSync("tibasucursal2026", 10), Rol: "Sucursal" },
+  { Usuario: "Nobsa", Contraseña: bcrypt.hashSync("nobsasucursal2026", 10), Rol: "Sucursal" },
+  { Usuario: "Fira", Contraseña: bcrypt.hashSync("firasucursal2026", 10), Rol: "Sucursal" },
+  { Usuario: "Aquitania", Contraseña: bcrypt.hashSync("aquitsucursal2026", 10), Rol: "Sucursal" },
+  { Usuario: "Hansel", Contraseña: bcrypt.hashSync("hanselsucursal2026", 10), Rol: "Sucursal" },
+  { Usuario: "mache", Contraseña: bcrypt.hashSync("macheadmin2026", 10), Rol: "Admin" },
 ];
 
 const RATES_SEED: EmployeeRate[] = [
@@ -932,8 +957,11 @@ export function deduplicateSchema(localDb: DatabaseSchema): DatabaseSchema {
     const branch = (o.Sucursal || "").toLowerCase().trim();
     const date = o.Fecha || "";
     const prod = (o.Producto || "").toLowerCase().trim();
-    if (pedId && code) return `${pedId}|${code}|${branch}`;
-    if (pedId && prod) return `${pedId}|${prod}|${branch}`;
+    // La cantidad entra a la clave: un mismo pedido puede pedir el mismo
+    // producto varias veces con distinta cantidad, y sin ella el dedupe los
+    // colapsaba a uno (se perdía un renglón real en cada guardado).
+    if (pedId && code) return `${pedId}|${code}|${branch}|${o.Cantidad || ""}`;
+    if (pedId && prod) return `${pedId}|${prod}|${branch}|${o.Cantidad || ""}`;
     return `${date}|${branch}|${code || prod}|${o.Cantidad}`;
   });
 
@@ -1184,7 +1212,10 @@ async function loadFromPostgres(): Promise<DatabaseSchema> {
       Responsable: n.responsable || "", Reconciliado_Fisico: !!n.reconciliadoFisico,
     } as NequiExpense, n.clientId)),
     syncLogs: syncLogsRows.map((l): SyncLog => ({
-      id: String(l.id), timestamp: (l.timestamp instanceof Date ? l.timestamp : new Date(l.timestamp as any)).toISOString(),
+      // Se conserva el client_id real. Antes se tomaba el serial (String(l.id)):
+      // el siguiente saveDb(["syncLogs"]) insertaba con client_id "37", "38", ...
+      // y como el ON CONFLICT nunca hacía match, cada ciclo duplicaba la fila.
+      id: l.clientId || String(l.id), timestamp: (l.timestamp instanceof Date ? l.timestamp : new Date(l.timestamp as any)).toISOString(),
       service: "Sistema", action: l.action, status: (l.status as any) || "success", details: l.details || "",
       itemsCount: l.itemsCount ?? undefined, durationMs: l.durationMs ?? undefined,
     })),
@@ -1379,13 +1410,6 @@ export async function saveDb(db: DatabaseSchema, only?: CollectionKey[]): Promis
   deduplicateSchema(db);
   ensureRecordIds(db);
 
-  // Copia local de respaldo — best-effort, nunca bloquea el guardado real.
-  try {
-    writeJsonBackup(db);
-  } catch (err: any) {
-    console.error("No se pudo escribir la copia local de respaldo (no crítico):", err.message || err);
-  }
-
   const targets = only && only.length > 0 ? only : ALL_COLLECTIONS;
 
   // Reintento con espera creciente: un corte breve de red hacia Supabase (o un
@@ -1401,6 +1425,16 @@ export async function saveDb(db: DatabaseSchema, only?: CollectionKey[]): Promis
           await TABLE_SYNCERS[key](db, tx);
         }
       });
+      // Copia local de respaldo — best-effort, solo tras el commit. Antes se
+      // escribía antes de la transacción, así que db.json podía contener una
+      // operación que el guardado luego descartaba (ej. el rollback de un
+      // pedido fallido) y ese "dato fantasma" se reescribía en Postgres en el
+      // próximo arranque sin conexión.
+      try {
+        writeJsonBackup(db);
+      } catch (err: any) {
+        console.error("No se pudo escribir la copia local de respaldo (no crítico):", err.message || err);
+      }
       if (attempt > 1) {
         console.log(`[Database] Guardado exitoso en el intento ${attempt}.`);
       }

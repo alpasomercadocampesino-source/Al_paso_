@@ -2543,7 +2543,9 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   };
 
   const handleMatrixEdit = (code: string, field: string, value: any) => {
-    const currentEdit = matrixEdits[code] || {};
+    // Clonar antes de mutar: sin la copia se alteraba la referencia ya metida
+    // en el estado, y cancelar no revertía los cambios (valor "fantasma").
+    const currentEdit = { ...(matrixEdits[code] || {}) };
     currentEdit[field] = value;
 
     const prodObj = products.find((p) => p.Codigo === code);

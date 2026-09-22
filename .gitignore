@@ -11,3 +11,6 @@ graphify-out/
 _tok.txt
 _*.mjs
 _*.json
+
+.vercel
+.env*

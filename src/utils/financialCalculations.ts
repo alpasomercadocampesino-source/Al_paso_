@@ -105,7 +105,13 @@ export function calculateReconciledClosuresSum(
 export function calculatePaidPayrollSum(
   payroll: PayrollRecord[] = []
 ): number {
-  return payroll.reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
+  // Solo la nómina realmente pagada entra al saldo central. Antes se sumaba el
+  // Total_Neto de todas las liquidaciones (Pendiente o Pagado), así que generar
+  // la nómina del mes —sin haber pagado a nadie— "desaparecía" esa plata de la
+  // Caja General.
+  return payroll
+    .filter((p) => p && p.Estado_Pago === "Pagado")
+    .reduce((acc, p) => acc + (p?.Total_Neto || 0), 0);
 }
 
 /**

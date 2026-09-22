@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as dotenv from "dotenv";
-import * as schema from "./schema.ts";
+import * as schema from "./schema.js";
 
 // Se carga aquí (no solo en server.ts) porque este módulo puede importarse
 // antes que cualquier otro punto de entrada llame a dotenv.config(), y

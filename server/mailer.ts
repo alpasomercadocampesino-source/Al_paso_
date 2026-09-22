@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import { Order } from "./db.ts";
+import { Order } from "./db.js";
 
 export async function sendOrderSummaryEmail(
   idPedido: string,
