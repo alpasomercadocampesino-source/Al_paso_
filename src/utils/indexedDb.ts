@@ -16,15 +16,24 @@ export interface PendingOrder {
 }
 
 export function initOfflineDb(): Promise<IDBDatabase> {
+  // En algunos navegadores indexedDB.open puede quedar colgado (modo incógnito,
+  // cuota llena, bloqueo). Sin tope, el arranque de la app se cuelga completo;
+  // con tope, los llamadores tratan la DB como no disponible y siguen en línea.
+  const TIMEOUT_MS = 4000;
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("IndexedDB open timed out"));
+    }, TIMEOUT_MS);
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = (event) => {
       console.error("IndexedDB error:", event);
+      clearTimeout(timeout);
       reject(new Error("Error opening IndexedDB"));
     };
 
     request.onsuccess = (event) => {
+      clearTimeout(timeout);
       const db = (event.target as IDBOpenDBRequest).result;
       resolve(db);
     };
