@@ -765,7 +765,7 @@ app.post("/api/orders", async (req, res) => {
 });
 
 // Update specific order details
-app.put("/api/orders/:id", async (req, res) => {
+app.put("/api/orders/:id", requireRole("Admin", "AdminSucursal", "Comprador"), async (req, res) => {
   const { id } = req.params;
   const index = db.orders.findIndex((o) => o.ID_Pedido === id || `${o.ID_Pedido}_${o.Codigo}` === id);
   if (index === -1) {
@@ -773,7 +773,27 @@ app.put("/api/orders/:id", async (req, res) => {
   }
 
   const current = db.orders[index];
+  if (!puedeVerSucursal(req, current.Sucursal)) {
+    return res.status(403).json({ error: "No tienes acceso a esta sucursal." });
+  }
+
   const { Cantidad_Comprada, Costo_Momento, Precio_Venta_Momento, Estado, Estado_Pago, Proveedor } = req.body;
+
+  if (Estado !== undefined && !["Pendiente", "Comprado", "Cancelado"].includes(Estado)) {
+    return res.status(400).json({ error: "Estado de pedido inválido" });
+  }
+  if (Estado_Pago !== undefined && !["Pendiente", "Pagado"].includes(Estado_Pago)) {
+    return res.status(400).json({ error: "Estado de pago inválido" });
+  }
+  if (Cantidad_Comprada !== undefined && isNaN(parseFloat(Cantidad_Comprada))) {
+    return res.status(400).json({ error: "Cantidad inválida" });
+  }
+  if (Costo_Momento !== undefined && isNaN(parseFloat(Costo_Momento))) {
+    return res.status(400).json({ error: "Costo inválido" });
+  }
+  if (Precio_Venta_Momento !== undefined && isNaN(parseFloat(Precio_Venta_Momento))) {
+    return res.status(400).json({ error: "Precio de venta inválido" });
+  }
 
   db.orders[index] = {
     ...current,
@@ -866,6 +886,15 @@ app.post("/api/orders/bulk-update", requireRole("Admin", "AdminSucursal", "Compr
     const target = db.orders[idx];
     // Cada sesión solo toca pedidos de sucursales que puede ver.
     if (!puedeVerSucursal(req, target.Sucursal, "pedidos")) continue;
+
+    const estadoVal = update.fields && update.fields.Estado;
+    const estadoPagoVal = update.fields && update.fields.Estado_Pago;
+    if (estadoVal !== undefined && !["Pendiente", "Comprado", "Cancelado"].includes(estadoVal)) {
+      return res.status(400).json({ error: `Valor de Estado inválido: ${estadoVal}` });
+    }
+    if (estadoPagoVal !== undefined && !["Pendiente", "Pagado"].includes(estadoPagoVal)) {
+      return res.status(400).json({ error: `Valor de Estado_Pago inválido: ${estadoPagoVal}` });
+    }
 
     const fields: Record<string, any> = {};
     for (const c of CAMPOS_EDITABLES_PEDIDO) {
@@ -1003,6 +1032,8 @@ app.post("/api/admin/matrix-save", requireRole("Admin", "AdminSucursal", "Compra
       // Now update branch orders
       const branches = sucursalesOrdenadas(db.branchConfigs);
       for (const sucursal of branches) {
+        // Un AdminSucursal solo edita/crea pedidos de su propia sucursal.
+        if (!puedeVerSucursal(req, sucursal)) continue;
         const fieldVal = editFields[sucursal]; // e.g. "2" or "" or undefined
         if (fieldVal === undefined) {
           // If sucursal quantity wasn't edited, we still might need to update Costo_Momento, Proveedor, Precio_Venta_Momento
