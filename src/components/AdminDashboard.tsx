@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toPng } from "html-to-image";
 import { 
-  ShieldCheck, LayoutGrid, ShoppingCart, Library, History, 
+  ShieldCheck, LayoutGrid, Library, History, 
   PlusCircle, Edit2, Check, RefreshCw, Smartphone, TrendingUp, DollarSign,
-  FileSpreadsheet, Wallet, Calendar, Boxes, Receipt, Printer, Trash2, ArrowUpRight, ArrowDownRight, ClipboardList, Plus, Download, Calculator, X, Settings, Store, Search, Edit,
-  ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, PhoneCall, AlertTriangle, CheckCircle2, Camera, Save
+  FileSpreadsheet, Wallet, Calendar, Boxes, Receipt, Printer, Trash2, ArrowDownRight, ClipboardList, Plus, Download, Calculator, X, Settings, Search, Edit,
+  ArrowUpDown, ArrowUp, ArrowDown, Users, Phone, AlertTriangle, CheckCircle2, Camera, Save
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { clasesSucursal, coloresSucursal } from "../utils/coloresSucursal";
-import { Product, Provider, PriceHistory, DailyClosure, WalletTransaction, EmployeeSchedule, EmployeeLoan, EmployeeRate, PayrollRecord, PackagingMovement, SyncLog, Shrinkage } from "../types";
+import { Product, Provider, PriceHistory, DailyClosure, WalletTransaction, EmployeeSchedule, EmployeeLoan, EmployeeRate, PayrollRecord, PackagingMovement, SyncLog, Shrinkage, Order, User } from "../types";
 import {
   calculateBranchUncollected,
   calculateTotalUncollected,
@@ -30,10 +30,7 @@ import {
   Legend,
   CartesianGrid,
   BarChart,
-  Bar,
-  AreaChart,
-  Area,
-  Cell
+  Bar
 } from "recharts";
 
 interface BranchConfigRowProps {
@@ -241,8 +238,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   const [modalFactorCan, setModalFactorCan] = useState("22");
   const [modalMerma, setModalMerma] = useState("0");
   
-  // Branch simulation state
-  const [simBranch, setSimBranch] = useState(sucursalAsignada || "Nobsa");
+  
 
   // Catalog manager state
   const [products, setProducts] = useState<Product[]>([]);
@@ -255,7 +251,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   
   // Price history visualization state
   const [historySelectedProduct, setHistorySelectedProduct] = useState<string>("all");
-  const [historyChartTab, setHistoryChartTab] = useState<"volatility" | "recent">("volatility");
+  
   const [historySearchTerm, setHistorySearchTerm] = useState("");
   const [historyShowSuggestions, setHistoryShowSuggestions] = useState(false);
 
@@ -353,8 +349,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     }
   };
 
-  // Smart Voice-Order simulated recording state
-  const [isRecording, setIsRecording] = useState(false);
+  
 
   // Selected supplier for packaging ledger filter
   const [selectedSupplier, setSelectedSupplier] = useState("");
@@ -511,8 +506,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
 
   // Individual payroll selection & loan registry states
   const [selectedPayrollEmployee, setSelectedPayrollEmployee] = useState<string>("");
-  const [payrollPeriod, setPayrollPeriod] = useState<"Semanal" | "Mensual">("Mensual");
-  const [payrollCalculationBase, setPayrollCalculationBase] = useState<"Teorico" | "Calendario">("Calendario");
+  const [payrollCalculationBase] = useState<"Teorico" | "Calendario">("Calendario");
 
   // Manual payroll overrides & adjustments
   const [manualDaysWorked, setManualDaysWorked] = useState<string>("");
@@ -668,7 +662,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   };
 
   // State for dynamic payroll receipt PNG capture
-  const [captureReceiptData, setCaptureReceiptData] = useState<{ emp: string; result: any } | null>(null);
+  const [captureReceiptData] = useState<{ emp: string; result: any } | null>(null);
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1031,7 +1025,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
           const roster = weeklyRoster[emp] || {};
           const cell = roster[dayName];
           if (cell && cell.sucursal && cell.sucursal !== "Descanso") {
-            const hrs = parseFloat(cell.horas) || 8;
+            const hrs = Number(cell.horas) || 8;
             const extra = Math.max(0, hrs - 7);
             rows.push({
               "FECHA": dateLabel,
@@ -1173,7 +1167,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       finalOvertimeHours,
       festiveHours,
       festivePay,
-      compDays,
       compPay,
       totalSueldoBaseComp,
       basePay,
@@ -1443,7 +1436,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       finalOvertimeHours,
       festiveHours,
       festivePay,
-      compDays,
       compPay,
       totalSueldoBaseComp,
       basePay,
@@ -1453,8 +1445,7 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
       healthDeduction,
       pensionDeduction,
       totalLoansDeducted,
-      totalNet,
-      storeSplits
+      totalNet
     } = result;
 
     const width = 450;
@@ -1802,13 +1793,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
   };
 
   // Edit product inline modal
-  const [editingProd, setEditingProd] = useState<Product | null>(null);
-  const [editCost, setEditCost] = useState("");
-  const [editVenta, setEditVenta] = useState("");
-  const [editUtil, setEditUtil] = useState("");
-  const [editProv, setEditProv] = useState("");
-
-  // Edit closure states
   const [editingClosure, setEditingClosure] = useState<DailyClosure | null>(null);
   const [editClosureVentas, setEditClosureVentas] = useState("");
   const [editClosureGastos, setEditClosureGastos] = useState("");
@@ -3066,68 +3050,6 @@ export default function AdminDashboard({ adminName, lastGlobalSync, sucursalAsig
     return dateStr;
   };
 
-  const handleExportDailyClosureExcel = (c: DailyClosure) => {
-    const excelDate = formatClosureDateForExcel(c.Fecha);
-    
-    // Parse individual expenses from Descripcion_Gastos
-    const rawExpenses = c.Descripcion_Gastos.split(";");
-    const parsedExpenses = rawExpenses.map(part => {
-      const p = part.trim();
-      if (!p) return null;
-      // Look for text followed by parenthesized currency: desc ($ 123) or desc (123)
-      const match = p.match(/(.+)\s*\(\$?\s*([\d.,]+)\s*\)/);
-      if (match) {
-        const desc = match[1].trim();
-        const priceStr = match[2].replace(/\./g, "").replace(/,/g, "");
-        const value = parseFloat(priceStr) || 0;
-        return { desc, value };
-      }
-      return { desc: p, value: 0 };
-    }).filter(Boolean) as { desc: string; value: number }[];
-
-    // Build the rows matching the attached image:
-    // FECHA | DESCRIPCION | VENTA TOTAL DIARIA | GASTOS | VENTAS EN EFECTIVO
-    const dataRows: any[] = [];
-
-    parsedExpenses.forEach(exp => {
-      dataRows.push({
-        "FECHA": excelDate,
-        "DESCRIPCION": exp.desc,
-        "VENTA TOTAL DIARIA": "",
-        "GASTOS": exp.value,
-        "VENTAS EN EFECTIVO": "ok"
-      });
-    });
-
-    if (dataRows.length === 0 && c.Gastos_Extra > 0) {
-      dataRows.push({
-        "FECHA": excelDate,
-        "DESCRIPCION": "Gastos reportados",
-        "VENTA TOTAL DIARIA": "",
-        "GASTOS": c.Gastos_Extra,
-        "VENTAS EN EFECTIVO": "ok"
-      });
-    }
-
-    const cashOnDay = c.Ventas_Totales - c.Gastos_Extra;
-    dataRows.push({
-      "FECHA": excelDate,
-      "DESCRIPCION": "Efectivo del dia",
-      "VENTA TOTAL DIARIA": c.Ventas_Totales,
-      "GASTOS": c.Gastos_Extra,
-      "VENTAS EN EFECTIVO": cashOnDay
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(dataRows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `Cierre ${c.Sucursal}`);
-
-    const maxW = [12, 35, 22, 15, 22];
-    worksheet["!cols"] = maxW.map(w => ({ wch: w }));
-
-    XLSX.writeFile(workbook, `Cierre_Diario_${c.Sucursal}_${c.Fecha}.xlsx`);
-  };
-
   const handleExportConsolidatedPayrollXLSX = () => {
     // 1. Employee Detail Sheet
     const employeeRows = employees.map(emp => {
@@ -3325,7 +3247,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
 
   const handleSaveSmartPayroll = async (
-    emp: string, totalNet: number, basePay: number, extraPay: number, loanDed: number, daysWork: number, hoursWork: number, splits: any
+    emp: string, totalNet: number, basePay: number, extraPay: number, loanDed: number, daysWork: number, hoursWork: number, _splits: any
   ) => {
     setLoading(true);
     setErrorMsg("");
@@ -3565,51 +3487,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
   };
 
   // Open Edit Product Inline Form
-  const startEditProduct = (p: Product) => {
-    setEditingProd(p);
-    setEditCost(String(p.Costo_Proveedor));
-    setEditVenta(String(p.Precio_Venta_Actual));
-    setEditUtil(String(p.Utilidad));
-    setEditProv(p.Proveedor);
-  };
-
-  // Save Edit Product Pricing
-  const handleSaveProductEdit = async () => {
-    if (!editingProd) return;
-    setLoading(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    const matchedProv = providers.find((p) => p.Proveedor === editProv);
-
-    try {
-      const res = await fetch(`/api/products/${editingProd.Codigo}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          Costo_Proveedor: parseFloat(editCost),
-          Precio_Venta_Actual: parseFloat(editVenta),
-          Utilidad: parseFloat(editUtil),
-          Proveedor: editProv,
-          Celular: matchedProv?.Celular || "",
-          user: adminName
-        })
-      });
-
-      if (res.ok) {
-        setSuccessMsg(`Precios y proveedor actualizados para ${editingProd.Producto}.`);
-        setEditingProd(null);
-        fetchProducts();
-      } else {
-        throw new Error("No se pudo actualizar el producto");
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const formatNumberWithDots = (num: number | string): string => {
     const raw = String(num).replace(/\D/g, "");
     if (!raw) return "";
@@ -4494,7 +4371,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   </thead>
                   <tbody className="divide-y divide-slate-150">
                     {getAdminMatrixData().map((row, idx) => {
-                      const isVarying = row.Precio_Compra !== row.Precio_Anterior;
                       return (
                         <tr
                           key={`${row.Codigo}-${row.Producto}-${idx}`}
@@ -7321,7 +7197,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   const count = getBranchPendingCount(bName);
                   const conf = branchConfigs[bName] || { baseCaja: 150000, recolectorPredeterminado: "Hamilton", montoAlerta: 500000 };
                   const isAlert = uncollected > conf.montoAlerta;
-                  const surplus = Math.max(0, uncollected - conf.baseCaja);
 
                   return (
                     <div key={bName} className={`p-4 border rounded-2xl flex flex-col justify-between transition-all ${
@@ -8362,17 +8237,13 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
 
                     const {
                       daysWorked,
-                      totalDaysBase,
-                      compDays,
                       compPay,
-                      totalSueldoBaseComp,
                       standardHours,
                       overtimeHours,
                       finalOvertimeHours,
                       discountedExtraHours,
                       festiveHours,
                       festivePay,
-                      dailyRate,
                       basePay,
                       extraPay,
                       transportAllowance,
@@ -10045,7 +9916,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                         return { desc, valueStr };
                                       }
                                       return { desc: p, valueStr: "" };
-                                    }).filter(Boolean);
+}).filter((x): x is { desc: string; valueStr: string } => Boolean(x));
 
                                     if (parsed.length === 0) {
                                       return <span className="text-slate-400 italic">—</span>;
@@ -10071,7 +9942,7 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                                     <div className="mt-1">
                                       <button
                                         type="button"
-                                        onClick={() => setViewingPhotoUrl(c.Foto_Factura)}
+                                        onClick={() => setViewingPhotoUrl(c.Foto_Factura ?? null)}
                                         title="Ver Factura / Soporte"
                                         className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-150 rounded-lg cursor-pointer transition shadow-xs text-[10px] font-bold"
                                       >
@@ -10394,7 +10265,6 @@ Esto sobrescribirá o creará los turnos en el Calendario únicamente para las f
                   <button
                     onClick={() => {
                       const printContents = document.getElementById("printable-ticket")?.innerHTML;
-                      const originalContents = document.body.innerHTML;
                       if (printContents) {
                         const printWindow = window.open("", "_blank");
                         if (printWindow) {

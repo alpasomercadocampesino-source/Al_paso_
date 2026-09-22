@@ -84,6 +84,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
       Precio_Venta_Momento?: number;
       Proveedor?: string;
       Estado?: "Pendiente" | "Comprado" | "Cancelado";
+      [key: string]: any;
     };
   }>({});
 
@@ -316,7 +317,7 @@ export default function CompradorDashboard({ username, isAdminView = false, last
     phone: string,
     orderDate: string,
     rows: any[],
-    totalCost: number
+    _totalCost: number
   ): Promise<{ url: string; blob: Blob }> => {
     return new Promise((resolve, reject) => {
       try {
